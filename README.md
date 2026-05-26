@@ -1,4 +1,4 @@
-# eScan — 漏洞扫描工具链 v2
+# eScan — 漏洞扫描工具链 v1
 
 基于 FOFA/Hunter + Nuclei + MIIT ICP + DeepSeek AI 的漏洞扫描工具链，提供 Web Dashboard 实时监控。
 
