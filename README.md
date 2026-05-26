@@ -148,7 +148,42 @@ Dashboard 提供以下功能模块：
 
 ## 数据库
 
-14 张表 + 3 个物化视图，完整记录扫描全生命周期：
+### 初始化
+
+```bash
+# 查看当前状态（表名、行数、Schema 版本）
+uv run python scripts/init_db.py --status
+
+# 首次初始化（建库 + 执行所有迁移）
+uv run python scripts/init_db.py --create
+
+# 删除旧库后重建
+uv run python scripts/init_db.py --drop
+
+# 仅执行迁移（库已存在时）
+uv run python scripts/init_db.py
+```
+
+配置从 `.env` 读取（`DB_HOST`、`DB_PORT`、`DB_NAME`、`DB_USER`、`DB_PASSWORD`）。
+
+### 迁移系统
+
+6 版增量迁移，版本号记录在 `schema_version` 表：
+
+| v | 内容 |
+|---|------|
+| 1 | 8 张核心表：模板、任务、资产、结果、ICP、缓存、去重、版本 |
+| 2 | scan_results/host_results/icp_results 去重约束 |
+| 3 | checkpoint_snapshots 断点续扫 |
+| 4 | template_scan_coverage 覆盖统计、icp_stats、URL 注册表、物化视图 |
+| 5 | scan_logs 实时日志 |
+| 6 | icp_results 增加 template_id + asset_id 直接关联 |
+
+启动 Web 服务时自动执行迁移（`escan server`），无需手动操作。
+
+### 表结构
+
+14 张表 + 3 个物化视图：
 
 ```
 poc_templates ──── 模板库
@@ -164,6 +199,7 @@ checkpoint_snapshots  断点续扫快照 (FK→任务)
 template_scan_coverage 模板扫描覆盖状态
 template_icp_stats ─── 模板 ICP 统计
 global_url_registry ── 跨模板 URL 注册表
+schema_version ──── 迁移版本管理
 ```
 
 ---
