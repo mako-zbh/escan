@@ -748,6 +748,19 @@ def run_categorized(
         cp = load_checkpoint(out_dir) or infer_checkpoint(out_dir, "categorized", engine, poc_path)
         task_id = cp.get("task_id")
         region = cp.get("region", region)  # 从断点恢复 region，命令行传入的作为回退
+
+        # 校验 task_id 在数据库中是否仍存在（可能已被前端删除）
+        if task_id:
+            from ..database.connection import get_cursor as _gc
+            from ..database.dao import create_scan_task as _cst
+            with _gc() as cur:
+                if cur is not None:
+                    cur.execute("SELECT 1 FROM scan_tasks WHERE task_id = %s", (task_id,))
+                    if not cur.fetchone():
+                        logger.warning("断点中的 task_id 已不存在 (%s)，创建新任务", task_id)
+                        task_id = _cst(cur, cp["scan_type"], cp.get("engine", engine), str(out_dir))
+                        cp["task_id"] = task_id
+
         resume_step = get_resume_step(cp)
         if resume_step is None:
             logger.info("所有步骤已完成: %s", out_dir)
@@ -869,6 +882,20 @@ def run_categorized_incremental(
         out_dir = resume_from_dir
         cp = load_checkpoint(out_dir) or infer_checkpoint(out_dir, "categorized_incremental", engine, poc_path)
         region = cp.get("region", region)
+        task_id = cp.get("task_id")
+
+        # 校验 task_id 在数据库中是否仍存在
+        if task_id:
+            from ..database.connection import get_cursor as _gc
+            from ..database.dao import create_scan_task as _cst
+            with _gc() as cur:
+                if cur is not None:
+                    cur.execute("SELECT 1 FROM scan_tasks WHERE task_id = %s", (task_id,))
+                    if not cur.fetchone():
+                        logger.warning("断点中的 task_id 已不存在 (%s)，创建新任务", task_id)
+                        task_id = _cst(cur, cp["scan_type"], cp.get("engine", engine), str(out_dir))
+                        cp["task_id"] = task_id
+
         resume_step = get_resume_step(cp)
         if resume_step is None:
             logger.info("所有步骤已完成: %s", out_dir)

@@ -154,7 +154,7 @@ def _query_official(query: str, size: int = FOFA_SIZE) -> list[FofaAsset]:
         "key": FOFA_KEY,
         "qbase64": qbase64,
         "size": size,
-        "fields": "host,ip,port,title,fid",
+        "fields": "host,ip,port,title",
     }
 
     resp = requests.get(
