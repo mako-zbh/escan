@@ -1,37 +1,30 @@
-// --- Vulnerability Overview ---
-
-var vulnPage = 0;
-var vulnPageSize = 50;
-var vulnTab = 'all';  // 'all' | 'icp'
+let vulnPage = 0;
+const vulnPageSize = 50;
+let vulnTab = 'all';
 
 document.getElementById('btnVulnOverview').addEventListener('click', openVulnModal);
+document.getElementById('btnExportCSV').addEventListener('click', exportVulnCSV);
 
-// Tab switching
-document.querySelectorAll('#vulnTabs .vuln-tab').forEach(function(el) {
-  el.addEventListener('click', function() {
+document.querySelectorAll('#vulnTabs .vuln-tab').forEach(el => {
+  el.addEventListener('click', () => {
     vulnTab = el.dataset.tab;
     vulnPage = 0;
-    document.querySelectorAll('#vulnTabs .vuln-tab').forEach(function(t) {
+    document.querySelectorAll('#vulnTabs .vuln-tab').forEach(t => {
       t.classList.toggle('active', t.dataset.tab === vulnTab);
     });
     loadVulnTable();
   });
 });
 
-document.getElementById('vulnSeverityFilter').addEventListener('change', function() {
+document.getElementById('vulnSeverityFilter').addEventListener('change', () => {
   vulnPage = 0;
   loadVulnTable();
 });
 
-document.getElementById('vulnSearch').addEventListener('input', debounceVuln(function() {
+document.getElementById('vulnSearch').addEventListener('input', Utils.debounce(() => {
   vulnPage = 0;
   loadVulnTable();
 }, 400));
-
-function debounceVuln(fn, ms) {
-  var t;
-  return function() { clearTimeout(t); t = setTimeout(fn, ms); };
-}
 
 function openVulnModal() {
   document.getElementById('vulnModal').style.display = 'block';
@@ -44,11 +37,11 @@ function closeVulnModal() {
 }
 
 function _vulnParams() {
-  var sev = document.getElementById('vulnSeverityFilter').value;
-  var search = document.getElementById('vulnSearch').value;
-  var offset = vulnPage * vulnPageSize;
+  const sev = document.getElementById('vulnSeverityFilter').value;
+  const search = document.getElementById('vulnSearch').value;
+  const offset = vulnPage * vulnPageSize;
 
-  var params = new URLSearchParams({ limit: vulnPageSize, offset: offset });
+  const params = new URLSearchParams({ limit: vulnPageSize, offset });
   if (sev) params.set('severity', sev);
   if (search) params.set('search', search);
   if (vulnTab === 'icp') params.set('has_icp', '1');
@@ -58,47 +51,47 @@ function _vulnParams() {
 
 async function loadVulnTable() {
   try {
-    var data = await fetchAPI('/vulnerabilities?' + _vulnParams());
+    const data = await fetchAPI('/vulnerabilities?' + _vulnParams());
     renderVulnTable(data.items);
     renderVulnPagination(data.total);
   } catch (e) {
     document.querySelector('#vulnTable tbody').innerHTML =
-      '<tr><td colspan="7" class="placeholder">加载失败: ' + e.message + '</td></tr>';
+      '<tr><td colspan="7" class="placeholder">加载失败: ' + Utils.escapeHtml(e.message) + '</td></tr>';
   }
 }
 
 function renderVulnTable(items) {
-  var tbody = document.querySelector('#vulnTable tbody');
+  const tbody = document.querySelector('#vulnTable tbody');
   if (!items.length) {
     tbody.innerHTML = '<tr><td colspan="7" class="placeholder">暂无数据</td></tr>';
     return;
   }
 
-  tbody.innerHTML = items.map(function(r) {
-    var tm = r.scanned_at ? new Date(r.scanned_at).toLocaleString('zh-CN') : '-';
-    var sev = r.severity || '-';
+  tbody.innerHTML = items.map(r => {
+    const tm = r.scanned_at ? new Date(r.scanned_at).toLocaleString('zh-CN') : '-';
+    const sev = r.severity || '-';
     return '<tr>' +
-      '<td title="' + escapeHtml(r.vuln_name || '') + '">' + escapeHtml(truncate(r.vuln_name, 35)) + '</td>' +
+      '<td title="' + Utils.escapeHtml(r.vuln_name || '') + '">' + Utils.escapeHtml(Utils.truncate(r.vuln_name, 35)) + '</td>' +
       '<td><span class="severity severity-' + sev + '">' + sev + '</span></td>' +
-      '<td><a href="' + escapeHtml(r.asset || '') + '" target="_blank" class="detail-link">' + escapeHtml(truncate(r.asset, 50)) + '</a></td>' +
-      '<td>' + escapeHtml(r.icp_domain || '-') + '</td>' +
-      '<td>' + escapeHtml(r.icp_number || '-') + '</td>' +
-      '<td title="' + escapeHtml(r.icp_company || '') + '">' + escapeHtml(truncate(r.icp_company, 25)) + '</td>' +
+      '<td><a href="' + Utils.escapeHtml(r.asset || '') + '" target="_blank" class="detail-link">' + Utils.escapeHtml(Utils.truncate(r.asset, 50)) + '</a></td>' +
+      '<td>' + Utils.escapeHtml(r.icp_domain || '-') + '</td>' +
+      '<td>' + Utils.escapeHtml(r.icp_number || '-') + '</td>' +
+      '<td title="' + Utils.escapeHtml(r.icp_company || '') + '">' + Utils.escapeHtml(Utils.truncate(r.icp_company, 25)) + '</td>' +
       '<td class="vuln-time">' + tm + '</td>' +
       '</tr>';
   }).join('');
 }
 
 function renderVulnPagination(total) {
-  var totalPages = Math.ceil(total / vulnPageSize) || 1;
+  const totalPages = Math.ceil(total / vulnPageSize) || 1;
   document.getElementById('vulnTotal').textContent = '共 ' + total + ' 条';
 
-  var html = '';
-  html += '<button ' + (vulnPage === 0 ? 'disabled' : '') + ' onclick="vulnGoPage(0)">首页</button>';
-  html += '<button ' + (vulnPage === 0 ? 'disabled' : '') + ' onclick="vulnGoPage(' + (vulnPage - 1) + ')">上一页</button>';
-  html += '<span class="page-info">' + (vulnPage + 1) + ' / ' + totalPages + '</span>';
-  html += '<button ' + (vulnPage >= totalPages - 1 ? 'disabled' : '') + ' onclick="vulnGoPage(' + (vulnPage + 1) + ')">下一页</button>';
-  html += '<button ' + (vulnPage >= totalPages - 1 ? 'disabled' : '') + ' onclick="vulnGoPage(' + (totalPages - 1) + ')">末页</button>';
+  const html =
+    '<button ' + (vulnPage === 0 ? 'disabled' : '') + ' onclick="vulnGoPage(0)">首页</button>' +
+    '<button ' + (vulnPage === 0 ? 'disabled' : '') + ' onclick="vulnGoPage(' + (vulnPage - 1) + ')">上一页</button>' +
+    '<span class="page-info">' + (vulnPage + 1) + ' / ' + totalPages + '</span>' +
+    '<button ' + (vulnPage >= totalPages - 1 ? 'disabled' : '') + ' onclick="vulnGoPage(' + (vulnPage + 1) + ')">下一页</button>' +
+    '<button ' + (vulnPage >= totalPages - 1 ? 'disabled' : '') + ' onclick="vulnGoPage(' + (totalPages - 1) + ')">末页</button>';
   document.getElementById('vulnPagination').innerHTML = html;
 }
 
@@ -107,13 +100,9 @@ function vulnGoPage(page) {
   loadVulnTable();
 }
 
-// --- CSV Export ---
-
-document.getElementById('btnExportCSV').addEventListener('click', exportVulnCSV);
-
 function exportVulnCSV() {
-  var url = API_BASE + '/vulnerabilities/export?' + _vulnParams();
-  var a = document.createElement('a');
+  const url = API_BASE + '/vulnerabilities/export?' + _vulnParams();
+  const a = document.createElement('a');
   a.href = url;
   a.download = 'vulnerabilities.csv';
   document.body.appendChild(a);

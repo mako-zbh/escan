@@ -19,7 +19,7 @@ async function loadTemplates(page = 0) {
     renderPagination(data.total);
   } catch (e) {
     document.querySelector('#templateTable tbody').innerHTML =
-      `<tr><td colspan="6" class="placeholder">加载失败: ${e.message}</td></tr>`;
+      `<tr><td colspan="6" class="placeholder">加载失败: ${Utils.escapeHtml(e.message)}</td></tr>`;
   }
 }
 
@@ -31,8 +31,8 @@ function renderTemplateTable(items) {
   }
 
   tbody.innerHTML = items.map(item => `
-    <tr data-template-id="${escapeHtml(item.template_id)}" onclick="selectTemplate('${escapeHtml(item.template_id)}', '${escapeHtml(item.name)}')">
-      <td title="${escapeHtml(item.name)}">${escapeHtml(truncate(item.name, 40))}</td>
+    <tr data-template-id="${Utils.escapeHtml(item.template_id)}" onclick="selectTemplate('${Utils.escapeHtml(item.template_id)}', '${Utils.escapeHtml(item.name)}')">
+      <td title="${Utils.escapeHtml(item.name)}">${Utils.escapeHtml(Utils.truncate(item.name, 40))}</td>
       <td><span class="severity severity-${item.severity || 'info'}">${item.severity || '-'}</span></td>
       <td>${item.asset_count}</td>
       <td>${item.hit_count}</td>
@@ -48,7 +48,7 @@ function renderPagination(total) {
   el.innerHTML = `
     <button ${templatePage === 0 ? 'disabled' : ''} onclick="loadTemplates(0)">首页</button>
     <button ${templatePage === 0 ? 'disabled' : ''} onclick="loadTemplates(${templatePage - 1})">上一页</button>
-    <span class="page-info">${templatePage + 1} / ${totalPages || 1} (共 ${total} 条)</span>
+    <span class="page-info">${templatePage + 1} / ${totalPages || 1}（共 ${total} 条）</span>
     <button ${templatePage >= totalPages - 1 ? 'disabled' : ''} onclick="loadTemplates(${templatePage + 1})">下一页</button>
     <button ${templatePage >= totalPages - 1 ? 'disabled' : ''} onclick="loadTemplates(${totalPages - 1})">末页</button>
   `;
@@ -59,14 +59,4 @@ function selectTemplate(id, name) {
     tr.classList.toggle('selected', tr.dataset.templateId === id);
   });
   loadTemplateDetail(id, name);
-}
-
-function escapeHtml(str) {
-  if (!str) return '';
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
-
-function truncate(str, len) {
-  if (!str) return '';
-  return str.length > len ? str.slice(0, len) + '...' : str;
 }

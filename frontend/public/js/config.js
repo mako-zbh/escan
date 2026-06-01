@@ -1,21 +1,20 @@
-// --- Config file editor ---
-
-var _configOriginalContent = '';
+let _configOriginalContent = '';
 
 document.getElementById('btnConfigOpen').addEventListener('click', openConfigModal);
+document.getElementById('configModalSave').addEventListener('click', saveConfig);
 
 async function openConfigModal() {
-  var modal = document.getElementById('configModal');
-  var editor = document.getElementById('configEditor');
-  var status = document.getElementById('configModalStatus');
+  const modal = document.getElementById('configModal');
+  const editor = document.getElementById('configEditor');
+  const status = document.getElementById('configModalStatus');
 
   editor.value = '';
-  status.textContent = '加载中...';
+  status.textContent = '加载中…';
   status.className = 'config-modal-status';
   modal.style.display = 'block';
 
   try {
-    var data = await fetchAPI('/config');
+    const data = await fetchAPI('/config');
     document.getElementById('configModalPath').textContent = data.path || '';
     editor.value = data.content || '';
     _configOriginalContent = data.content || '';
@@ -27,44 +26,43 @@ async function openConfigModal() {
 }
 
 function closeConfigModal() {
-  var editor = document.getElementById('configEditor');
-  var current = editor.value;
-  if (current !== _configOriginalContent) {
-    if (!confirm('内容已修改，确定不保存就关闭吗？')) return;
+  const editor = document.getElementById('configEditor');
+  if (editor.value !== _configOriginalContent) {
+    if (!Utils.confirm('内容已修改，确定不保存就关闭吗？')) return;
   }
   document.getElementById('configModal').style.display = 'none';
 }
 
-document.getElementById('configModalSave').addEventListener('click', saveConfig);
-
 async function saveConfig() {
-  var editor = document.getElementById('configEditor');
-  var status = document.getElementById('configModalStatus');
-  var btn = document.getElementById('configModalSave');
-  var content = editor.value;
+  const editor = document.getElementById('configEditor');
+  const status = document.getElementById('configModalStatus');
+  const btn = document.getElementById('configModalSave');
+  const content = editor.value;
 
   btn.disabled = true;
-  btn.textContent = '保存中...';
+  btn.textContent = '保存中…';
   status.textContent = '';
   status.className = 'config-modal-status';
 
   try {
-    var res = await fetch(API_BASE + '/config', {
+    const res = await fetch(API_BASE + '/config', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content: content }),
+      body: JSON.stringify({ content }),
     });
     if (!res.ok) {
-      var err = await res.json().catch(function() { return { error: res.statusText }; });
+      const err = await res.json().catch(() => ({ error: res.statusText }));
       throw new Error(err.error || 'HTTP ' + res.status);
     }
-    var data = await res.json();
+    const data = await res.json();
     _configOriginalContent = content;
     status.textContent = '已保存' + (data.backup ? '（备份: ' + data.backup + '）' : '');
     status.className = 'config-modal-status success';
+    Utils.showToast('配置文件已保存', 'success');
   } catch (e) {
     status.textContent = '保存失败: ' + e.message;
     status.className = 'config-modal-status error';
+    Utils.showToast('保存失败: ' + e.message, 'error');
   } finally {
     btn.disabled = false;
     btn.textContent = '保存';

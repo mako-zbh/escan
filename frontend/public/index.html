@@ -11,39 +11,41 @@
   <header class="header">
     <h1>eScan</h1>
     <span class="subtitle">漏洞模板数据中心</span>
-    <button class="btn-config-open" id="btnConfigOpen">配置</button>
-    <button class="btn-vuln-overview" id="btnVulnOverview">漏洞总览</button>
-    <button class="btn-icp-query" id="btnIcpQuery">ICP 查询</button>
-    <button class="btn-scan-toggle" id="btnScanToggle">执行扫描</button>
+    <button class="btn btn-ghost" id="btnConfigOpen">配置</button>
+    <button class="btn btn-ghost" id="btnVulnOverview">漏洞总览</button>
+    <button class="btn btn-primary" id="btnIcpQuery">ICP 查询</button>
+    <button class="btn btn-primary btn-scan-toggle" id="btnScanToggle">执行扫描</button>
   </header>
 
   <!-- Scan Panel -->
   <div class="scan-panel" id="scanPanel" style="display:none">
     <div class="scan-panel-inner">
-      <div class="scan-form">
-        <div class="scan-form-row">
-          <div class="scan-field">
-            <label>扫描类型</label>
-            <select id="scanType">
-              <option value="categorized">分类全量扫描</option>
-              <option value="categorized-incremental">增量分类扫描</option>
-            </select>
-          </div>
-          <div class="scan-field">
-            <label>搜索引擎</label>
-            <select id="scanEngine">
-              <option value="fofa">FOFA</option>
-              <option value="hunter">Hunter</option>
-            </select>
-          </div>
-          <div class="scan-field scan-field-path">
-            <label>POC 路径（可选）</label>
-            <input type="text" id="scanPoc" placeholder="留空使用默认 nuclei-poc/">
-          </div>
-          <div class="scan-field scan-field-action">
-            <label>&nbsp;</label>
-            <button class="btn-scan-start" id="btnScanStart">开始扫描</button>
-          </div>
+      <div class="scan-form-row">
+        <div class="scan-field">
+          <label>扫描类型</label>
+          <select id="scanType">
+            <option value="categorized">分类全量扫描</option>
+            <option value="categorized-incremental">增量分类扫描</option>
+          </select>
+        </div>
+        <div class="scan-field">
+          <label>搜索引擎</label>
+          <select id="scanEngine">
+            <option value="fofa">FOFA</option>
+            <option value="hunter">Hunter</option>
+          </select>
+        </div>
+        <div class="scan-field scan-field-path">
+          <label>POC 路径（可选）</label>
+          <input type="text" id="scanPoc" placeholder="留空使用默认 nuclei-poc/">
+        </div>
+        <div class="scan-field">
+          <label>地域筛选（可选）</label>
+          <input type="text" id="scanRegion" placeholder="如 CN, 北京, Shanghai">
+        </div>
+        <div class="scan-field">
+          <label>&nbsp;</label>
+          <button class="btn btn-primary" id="btnScanStart">开始扫描</button>
         </div>
       </div>
       <div class="scan-task-list" id="scanTaskList">
@@ -53,10 +55,10 @@
   </div>
 
   <div class="stat-cards" id="statCards">
-    <div class="card"><div class="card-value" id="statTemplates">-</div><div class="card-label">模板总数</div></div>
-    <div class="card"><div class="card-value" id="statAssets">-</div><div class="card-label">资产总数</div></div>
-    <div class="card"><div class="card-value" id="statHosts">-</div><div class="card-label">发现域名</div></div>
-    <div class="card"><div class="card-value" id="statIcp">-</div><div class="card-label">ICP 备案</div></div>
+    <div class="card"><div class="card-value skeleton skeleton-value" id="statTemplates"></div><div class="card-label">模板总数</div></div>
+    <div class="card"><div class="card-value skeleton skeleton-value" id="statAssets"></div><div class="card-label">资产总数</div></div>
+    <div class="card"><div class="card-value skeleton skeleton-value" id="statHosts"></div><div class="card-label">发现域名</div></div>
+    <div class="card"><div class="card-value skeleton skeleton-value" id="statIcp"></div><div class="card-label">ICP 备案</div></div>
   </div>
 
   <div class="main-layout" id="mainLayout">
@@ -65,40 +67,22 @@
       <div class="panel-header">
         <h2>模板库</h2>
         <div class="panel-controls">
-          <select id="icpFilter">
-            <option value="">全部备案</option>
-            <option value="1">有 ICP 备案</option>
-            <option value="0">无 ICP 备案</option>
-          </select>
-          <select id="severityFilter">
-            <option value="">全部严重度</option>
-            <option value="critical">critical</option>
-            <option value="high">high</option>
-            <option value="medium">medium</option>
-            <option value="low">low</option>
-            <option value="info">info</option>
-          </select>
+          <select id="icpFilter"><option value="">全部备案</option><option value="1">有 ICP 备案</option><option value="0">无 ICP 备案</option></select>
+          <select id="severityFilter"><option value="">全部严重度</option><option value="critical">critical</option><option value="high">high</option><option value="medium">medium</option><option value="low">low</option><option value="info">info</option></select>
           <input type="text" id="templateSearch" placeholder="搜索模板名...">
         </div>
       </div>
       <div class="chart-container" id="severityPieChart"></div>
       <div class="table-wrap">
-        <table id="templateTable">
-          <thead>
-            <tr>
-              <th>名称</th><th>严重度</th><th>资产</th><th>命中</th><th>域名</th><th>ICP</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
+        <table id="templateTable"><thead><tr><th>名称</th><th>严重度</th><th>资产</th><th>命中</th><th>域名</th><th>ICP</th></tr></thead><tbody></tbody></table>
       </div>
       <div class="pagination" id="templatePagination"></div>
     </div>
 
     <!-- Right: Template Detail -->
-    <div class="panel panel-right" id="detailPanel">
+    <div class="panel panel-right" id="detailPanel" style="display:none">
       <div class="panel-header">
-        <button id="backBtn" class="btn-back">&larr; 返回模板库</button>
+        <button class="btn btn-back" id="backBtn">&larr; 返回模板库</button>
         <h2 id="detailTitle">选择模板查看详情</h2>
       </div>
       <div class="detail-stats" id="detailStats"></div>
@@ -114,108 +98,76 @@
     </div>
   </div>
 
-  <!-- Config Modal -->
-  <div class="config-modal" id="configModal">
-    <div class="config-modal-mask" onclick="closeConfigModal()"></div>
-    <div class="config-modal-content">
-      <div class="config-modal-header">
-        <span class="config-modal-title">配置文件编辑</span>
-        <div class="config-modal-header-actions">
+  <!-- ============ Config Modal ============ -->
+  <div class="modal" id="configModal">
+    <div class="modal-mask" onclick="closeConfigModal()"></div>
+    <div class="modal-content modal-config">
+      <div class="modal-header">
+        <span class="modal-title">配置文件编辑</span>
+        <div class="modal-header-actions">
           <span class="config-modal-path" id="configModalPath"></span>
-          <button class="config-modal-save" id="configModalSave">保存</button>
-          <button class="config-modal-close" onclick="closeConfigModal()">×</button>
+          <button class="btn btn-primary" id="configModalSave">保存</button>
+          <button class="modal-close" onclick="closeConfigModal()">×</button>
         </div>
       </div>
-      <div class="config-modal-body">
-        <textarea id="configEditor" spellcheck="false"></textarea>
-      </div>
-      <div class="config-modal-footer">
-        <span class="config-modal-status" id="configModalStatus"></span>
-      </div>
+      <div class="config-modal-body"><textarea id="configEditor" spellcheck="false"></textarea></div>
+      <div class="modal-footer"><span class="config-modal-status" id="configModalStatus"></span></div>
     </div>
   </div>
 
-  <!-- Vulnerability Overview Modal -->
-  <div class="vuln-modal" id="vulnModal">
-    <div class="vuln-modal-mask" onclick="closeVulnModal()"></div>
-    <div class="vuln-modal-content">
-      <div class="vuln-modal-header">
-        <span class="vuln-modal-title">漏洞综合视图</span>
+  <!-- ============ Vuln Overview Modal ============ -->
+  <div class="modal" id="vulnModal">
+    <div class="modal-mask" onclick="closeVulnModal()"></div>
+    <div class="modal-content modal-lg">
+      <div class="modal-header">
+        <span class="modal-title">漏洞综合视图</span>
         <div class="vuln-tabs" id="vulnTabs">
           <button class="vuln-tab active" data-tab="all">全量</button>
           <button class="vuln-tab" data-tab="icp">有ICP备案</button>
         </div>
-        <div class="vuln-modal-header-actions">
-          <select id="vulnSeverityFilter">
-            <option value="">全部严重度</option>
-            <option value="critical">critical</option>
-            <option value="high">high</option>
-            <option value="medium">medium</option>
-            <option value="low">low</option>
-            <option value="info">info</option>
-          </select>
+        <div class="modal-header-actions">
+          <select id="vulnSeverityFilter"><option value="">全部严重度</option><option value="critical">critical</option><option value="high">high</option><option value="medium">medium</option><option value="low">low</option><option value="info">info</option></select>
           <input type="text" id="vulnSearch" placeholder="搜索漏洞名/资产...">
-          <button class="vuln-modal-export" id="btnExportCSV">导出 CSV</button>
-          <button class="vuln-modal-close" onclick="closeVulnModal()">×</button>
+          <button class="btn btn-success" id="btnExportCSV">导出 CSV</button>
+          <button class="modal-close" onclick="closeVulnModal()">×</button>
         </div>
       </div>
-      <div class="vuln-modal-table-wrap">
-        <table id="vulnTable">
-          <thead>
-            <tr>
-              <th>漏洞名称</th>
-              <th>严重度</th>
-              <th>资产 URL</th>
-              <th>ICP 域名</th>
-              <th>ICP 备案号</th>
-              <th>备案主体</th>
-              <th>扫描时间</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
+      <div class="modal-body">
+        <table id="vulnTable"><thead><tr><th>漏洞名称</th><th>严重度</th><th>资产 URL</th><th>ICP 域名</th><th>ICP 备案号</th><th>备案主体</th><th>扫描时间</th></tr></thead><tbody></tbody></table>
       </div>
-      <div class="vuln-modal-footer">
+      <div class="modal-footer">
         <span class="vuln-modal-total" id="vulnTotal"></span>
         <div class="vuln-pagination" id="vulnPagination"></div>
       </div>
     </div>
   </div>
 
+  <!-- ============ ICP Query Modal ============ -->
+  <div class="modal" id="icpQueryModal">
+    <div class="modal-mask" onclick="closeIcpQueryModal()"></div>
+    <div class="modal-content modal-md">
+      <div class="modal-header">
+        <span class="modal-title">ICP 备案查询</span>
+        <span class="icp-query-subtitle">工信部官方 API</span>
+        <button class="modal-close" onclick="closeIcpQueryModal()">×</button>
+      </div>
+      <div class="icp-query-form">
+        <input type="text" id="icpQuerySearch" placeholder="输入域名或单位名称，如 qq.com" onkeydown="if(event.key==='Enter')doIcpQuery()">
+        <button class="btn btn-primary" id="icpQueryBtn" onclick="doIcpQuery()">查询</button>
+      </div>
+      <div class="icp-query-status" id="icpQueryStatus"></div>
+      <div class="modal-body">
+        <table id="icpQueryTable"><thead><tr><th>域名</th><th>主办单位</th><th>备案号</th><th>单位性质</th><th>负责人</th><th>审核时间</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+  </div>
+
+  <script src="/js/utils.js"></script>
   <script src="/js/api.js"></script>
   <script src="/js/dashboard.js"></script>
   <script src="/js/templates.js"></script>
   <script src="/js/detail.js"></script>
   <script src="/js/scan.js"></script>
-  <!-- ICP Query Modal -->
-  <div class="icp-query-modal" id="icpQueryModal">
-    <div class="icp-query-mask" onclick="closeIcpQueryModal()"></div>
-    <div class="icp-query-content">
-      <div class="icp-query-header">
-        <span class="icp-query-title">ICP 备案查询</span>
-        <span class="icp-query-subtitle">工信部官方 API</span>
-        <div class="icp-query-header-actions">
-          <button class="icp-query-close" onclick="closeIcpQueryModal()">×</button>
-        </div>
-      </div>
-      <div class="icp-query-form">
-        <input type="text" id="icpQuerySearch" placeholder="输入域名或单位名称，如 qq.com" onkeydown="if(event.key==='Enter')doIcpQuery()">
-        <button class="icp-query-btn" id="icpQueryBtn" onclick="doIcpQuery()">查询</button>
-      </div>
-      <div class="icp-query-status" id="icpQueryStatus"></div>
-      <div class="icp-query-table-wrap">
-        <table id="icpQueryTable">
-          <thead>
-            <tr>
-              <th>域名</th><th>主办单位</th><th>备案号</th><th>单位性质</th><th>负责人</th><th>审核时间</th>
-            </tr>
-          </thead>
-          <tbody></tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-
   <script src="/js/config.js"></script>
   <script src="/js/vuln.js"></script>
   <script src="/js/icp_query.js"></script>

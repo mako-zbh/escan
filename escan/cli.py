@@ -177,7 +177,7 @@ def cmd_pipeline_categorized(args):
                 print(f"所有步骤已完成 (推断): {latest}")
                 return
             print(f"恢复扫描 ({engine}): {latest} (推断: 从 Step {resume_step} 继续)")
-        results = run_categorized(poc, engine, resume_from_dir=latest)
+        results = run_categorized(poc, engine, resume_from_dir=latest, region=args.region)
         print(f"分类扫描完成: 资产 {results['step1']}, 漏洞 {results['step2']}, "
               f"主机 {results['step3']}, ICP {results['step4']}")
         return
@@ -190,7 +190,7 @@ def cmd_pipeline_categorized(args):
             sys.exit(1)
 
         step_map = {
-            1: lambda: run_categorized_step1(poc, out_dir, engine),
+            1: lambda: run_categorized_step1(poc, out_dir, engine, region=args.region),
             2: lambda: run_categorized_step2(poc, out_dir),
             3: lambda: run_categorized_step3(out_dir),
             4: lambda: run_categorized_step4(out_dir),
@@ -215,7 +215,7 @@ def cmd_pipeline_categorized(args):
         print(f"使用最新输出目录: {out_dir}")
 
         step_map = {
-            1: lambda: run_categorized_step1(poc, out_dir, engine),
+            1: lambda: run_categorized_step1(poc, out_dir, engine, region=args.region),
             2: lambda: run_categorized_step2(poc, out_dir),
             3: lambda: run_categorized_step3(out_dir),
             4: lambda: run_categorized_step4(out_dir),
@@ -227,7 +227,7 @@ def cmd_pipeline_categorized(args):
 
     # 无 step 无 dir 无 resume → 完整分类扫描
     print(f"分类扫描 ({engine}): 每个模板独立查询+扫描 → {poc}")
-    results = run_categorized(poc, engine)
+    results = run_categorized(poc, engine, region=args.region)
     print(f"分类扫描完成: 资产 {results['step1']}, 漏洞 {results['step2']}, "
           f"主机 {results['step3']}, ICP {results['step4']}")
 
@@ -259,14 +259,14 @@ def cmd_pipeline_categorized_incremental(args):
                 print(f"所有步骤已完成 (推断): {latest}")
                 return
             print(f"恢复增量扫描 ({engine}): {latest} (推断: 从 Step {resume_step} 继续)")
-        results = run_categorized_incremental(poc, engine, resume_from_dir=latest)
+        results = run_categorized_incremental(poc, engine, resume_from_dir=latest, region=args.region)
         if results["step1"] == 0:
             print("全部命中缓存，无新资产")
         else:
             print(f"增量分类扫描完成 ({engine}): 资产 {results['step1']}, 漏洞 {results['step2']}")
         return
 
-    results = run_categorized_incremental(poc, engine)
+    results = run_categorized_incremental(poc, engine, region=args.region)
     if results["step1"] == 0:
         print("全部命中缓存，无新资产")
     else:
@@ -307,10 +307,18 @@ def cmd_pipeline_search(args):
     from .pipeline.orchestrator import _resolve_single_query_fn
     from .utils.files import write_output
 
+    from .pipeline.orchestrator import _build_region_clause
+
     setup_logging("escan")
     engine = args.engine
     query_fn = _resolve_single_query_fn(engine)
-    assets = query_fn(args.query, args.size)
+
+    query = args.query
+    region_clause = _build_region_clause(args.region)
+    if region_clause:
+        query = f"{query} && {region_clause}"
+
+    assets = query_fn(query, args.size)
     ts = time.strftime("%Y%m%d_%H%M%S")
     content = "\n".join(assets) + "\n"
     path = write_output(engine, f"query_{ts}.txt", content)
@@ -375,11 +383,13 @@ def main():
     search_parser.add_argument("query", help="查询语句")
     search_parser.add_argument("-s", "--size", type=int, default=100, help="返回数量")
     search_parser.add_argument("--engine", choices=["fofa", "hunter"], default="fofa", help=engine_help)
+    search_parser.add_argument("--region", default="", help="地域筛选，如 CN/北京/Shanghai，留空查全部")
     search_parser.set_defaults(func=cmd_pipeline_search)
 
     cat_parser = pipe_sub.add_parser("categorized", help="分类扫描（每模板独立查询+扫描）")
     cat_parser.add_argument("poc", nargs="?", help="POC 模板目录（默认 nuclei-poc/）")
     cat_parser.add_argument("--engine", choices=["fofa", "hunter"], default="fofa", help=engine_help)
+    cat_parser.add_argument("--region", default="", help="地域筛选，如 CN/北京/Shanghai，留空查全部")
     cat_parser.add_argument("--step", type=int, choices=[1, 2, 3, 4],
                             help="仅执行指定步骤（1:资产 2:Nuclei 3:Host 4:ICP）")
     cat_parser.add_argument("--dir", help="指定已有输出目录（配合 --step 使用）")
@@ -391,6 +401,7 @@ def main():
     )
     cat_incr_parser.add_argument("poc", nargs="?", help="POC 模板目录（默认 nuclei-poc/）")
     cat_incr_parser.add_argument("--engine", choices=["fofa", "hunter"], default="fofa", help=engine_help)
+    cat_incr_parser.add_argument("--region", default="", help="地域筛选，如 CN/北京/Shanghai，留空查全部")
     cat_incr_parser.add_argument("--resume", action="store_true", help="从最新输出目录自动恢复中断的增量扫描")
     cat_incr_parser.set_defaults(func=cmd_pipeline_categorized_incremental)
 

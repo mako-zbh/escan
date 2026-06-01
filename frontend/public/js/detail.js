@@ -3,7 +3,7 @@ let currentSubTab = 'urls';
 
 async function loadTemplateDetail(id, name) {
   currentTemplateId = id;
-  document.getElementById('detailTitle').textContent = truncate(name, 50);
+  document.getElementById('detailTitle').textContent = Utils.truncate(name, 50);
   document.getElementById('detailPanel').style.display = 'flex';
 
   try {
@@ -11,14 +11,13 @@ async function loadTemplateDetail(id, name) {
     renderDetailStats(data);
   } catch (e) {
     document.getElementById('detailStats').innerHTML =
-      `<div class="placeholder">加载失败: ${e.message}</div>`;
+      `<div class="placeholder">加载失败: ${Utils.escapeHtml(e.message)}</div>`;
   }
 
   setSubTab(currentSubTab);
 }
 
 function renderDetailStats(data) {
-  // aggregate across tasks
   let totalAssets = 0, totalHits = 0, totalHosts = 0, totalIcpQueried = 0;
   (data.tasks || []).forEach(t => {
     totalAssets += t.asset_count || 0;
@@ -56,7 +55,7 @@ async function loadSubTabData(tab) {
     const data = await fetchAPI(`/templates/${currentTemplateId}/${tab}`);
     renderDetailTable(tab, data);
   } catch (e) {
-    wrap.innerHTML = `<div class="placeholder">加载失败: ${e.message}</div>`;
+    wrap.innerHTML = `<div class="placeholder">加载失败: ${Utils.escapeHtml(e.message)}</div>`;
   }
 }
 
@@ -96,10 +95,10 @@ function renderDetailTable(tab, data) {
       } else if (col === 'is_ip') {
         val = val ? '是' : '否';
       } else if (col === 'url' || col === 'matched_url') {
-        val = `<a href="${escapeHtml(val || '')}" target="_blank" class="detail-link">${escapeHtml(truncate(val, 60))}</a>`;
+        val = `<a href="${Utils.escapeHtml(val || '')}" target="_blank" class="detail-link">${Utils.escapeHtml(Utils.truncate(val, 60))}</a>`;
       } else {
-        val = escapeHtml(String(val ?? '-'));
-        if (val.length > 60) val = val.slice(0, 60) + '...';
+        val = Utils.escapeHtml(String(val ?? '-'));
+        if (val.length > 60) val = val.slice(0, 60) + '…';
       }
       html += `<td>${val}</td>`;
     });

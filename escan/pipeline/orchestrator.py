@@ -42,6 +42,20 @@ def _check_stop(stop_event: threading.Event | None):
         raise StopScanException("扫描已停止")
 
 
+def _build_region_clause(region: str) -> str:
+    """将地域输入转为 FOFA/Hunter 地域过滤片段。
+
+    规则：2-3 位纯大写字母 → country="XX"，其余 → region="XX"
+    空字符串 → 不追加过滤。
+    """
+    region = (region or "").strip()
+    if not region:
+        return ""
+    if region.isascii() and region.isupper() and 2 <= len(region) <= 3 and region.isalpha():
+        return f'country="{region}"'
+    return f'region="{region}"'
+
+
 def _resolve_query_fn(engine: str):
     """根据引擎名返回对应的批量查询函数。"""
     if engine == "hunter":
@@ -90,8 +104,11 @@ def _asset_record(url: str, engine: str, query_used: str) -> dict:
 def _collect_categorized_assets(
     yaml_files: list[str], out_dir: Path, engine: str = "fofa",
     task_id: str = None, skip_existing: bool = False,
+    region: str = "",
 ) -> dict[str, list[str]]:
     """Step 1 核心：逐模板查询 FOFA，资产按模板名分类保存（即时写入）。
+
+    region: 可选地域筛选，如 "CN" → country="CN"，"北京" → region="北京"
 
     Returns:
         {template_name: [asset_urls]}
@@ -131,6 +148,11 @@ def _collect_categorized_assets(
         if not tags:
             logger.warning("  %s → 无 tags，跳过", filename)
             continue
+
+        # 追回地域过滤
+        region_clause = _build_region_clause(region)
+        if region_clause:
+            tags = f"{tags} && {region_clause}"
 
         try:
             assets = query_fn([tags])
@@ -193,7 +215,8 @@ def _collect_categorized_assets(
 
 
 def run_categorized_step1(poc_path: str, out_dir: Path, engine: str = "fofa",
-                          task_id: str = None, skip_existing: bool = False) -> int:
+                          task_id: str = None, skip_existing: bool = False,
+                          region: str = "") -> int:
     """分类 Step 1：收集并分类资产。"""
     if os.path.isfile(poc_path):
         yaml_files = [poc_path]
@@ -210,6 +233,7 @@ def run_categorized_step1(poc_path: str, out_dir: Path, engine: str = "fofa",
     logger.info("分类 Step 1 (%s): 读取 %d 个 POC 模板", engine.upper(), len(yaml_files))
     categorized = _collect_categorized_assets(
         yaml_files, out_dir, engine, task_id, skip_existing=skip_existing,
+        region=region,
     )
     return sum(len(v) for v in categorized.values())
 
@@ -652,12 +676,14 @@ def run_categorized(
     resume_from_dir: Path | None = None,
     task_id: str = None,
     stop_event: threading.Event | None = None,
+    region: str = "",
 ) -> dict:
     """执行分类扫描流水线（推荐）：每个模板独立查询+扫描，ICP 按模板分类。
 
     支持断点续扫：传入 resume_from_dir 从上次中断位置继续。
     task_id: 可选，外部预创建的 scan_tasks ID，传入后不再重复创建。
     stop_event: 可选，用于外部停止扫描。
+    region: 可选地域筛选，如 "CN" → country="CN"，"北京" → region="北京"
     """
     from ..database.connection import get_cursor
     from ..database.dao import create_scan_task, complete_scan_task
@@ -671,6 +697,7 @@ def run_categorized(
         out_dir = resume_from_dir
         cp = load_checkpoint(out_dir) or infer_checkpoint(out_dir, "categorized", engine, poc_path)
         task_id = cp.get("task_id")
+        region = cp.get("region", region)  # 从断点恢复 region，命令行传入的作为回退
         resume_step = get_resume_step(cp)
         if resume_step is None:
             logger.info("所有步骤已完成: %s", out_dir)
@@ -690,7 +717,7 @@ def run_categorized(
         if not task_id:
             with get_cursor() as cur:
                 task_id = create_scan_task(cur, "categorized", engine, str(out_dir))
-        cp = init_checkpoint(out_dir, "categorized", engine, poc_path, task_id)
+        cp = init_checkpoint(out_dir, "categorized", engine, poc_path, task_id, region=region)
         resume_step = 1
 
     is_resume = resume_from_dir is not None
@@ -701,7 +728,8 @@ def run_categorized(
         mark_step_started(out_dir, task_id, 1)
         _update_task_step(task_id, 1)
         asset_count = run_categorized_step1(poc_path, out_dir, engine, task_id,
-                                            skip_existing=is_resume)
+                                            skip_existing=is_resume,
+                                            region=region)
         mark_step_completed(out_dir, task_id, 1)
     else:
         asset_count = _count_existing_assets(out_dir)
@@ -774,10 +802,12 @@ def run_categorized_incremental(
     resume_from_dir: Path | None = None,
     task_id: str = None,
     stop_event: threading.Event | None = None,
+    region: str = "",
 ) -> dict:
     """增量分类扫描：跳过已缓存的查询，只扫描新资产。支持断点续扫。
     task_id: 可选，外部预创建的 scan_tasks ID，传入后不再重复创建。
     stop_event: 可选，用于外部停止扫描。
+    region: 可选地域筛选，如 "CN" → country="CN"，"北京" → region="北京"
     """
     from .checkpoint import (
         init_checkpoint, load_checkpoint, infer_checkpoint,
@@ -788,6 +818,7 @@ def run_categorized_incremental(
         # --- 恢复模式 ---
         out_dir = resume_from_dir
         cp = load_checkpoint(out_dir) or infer_checkpoint(out_dir, "categorized_incremental", engine, poc_path)
+        region = cp.get("region", region)
         resume_step = get_resume_step(cp)
         if resume_step is None:
             logger.info("所有步骤已完成: %s", out_dir)
@@ -804,7 +835,7 @@ def run_categorized_incremental(
             os.path.join(os.path.dirname(POC_DIR), "output", "pipeline")
         )
         logger.info("开始增量分类扫描 (%s)，输出目录: %s", engine.upper(), out_dir)
-        cp = init_checkpoint(out_dir, "categorized_incremental", engine, poc_path, task_id)
+        cp = init_checkpoint(out_dir, "categorized_incremental", engine, poc_path, task_id, region=region)
         resume_step = 1
 
     is_resume = resume_from_dir is not None
@@ -824,7 +855,8 @@ def run_categorized_incremental(
         if is_resume:
             # 恢复：用 step1 标准函数（自带 skip_existing + 缓存命中逻辑）
             asset_count = run_categorized_step1(poc_path, out_dir, engine,
-                                                task_id=None, skip_existing=True)
+                                                task_id=None, skip_existing=True,
+                                                region=region)
         else:
             # 新建：原有缓存内联逻辑
             single_query_fn = _resolve_single_query_fn(engine)

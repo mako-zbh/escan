@@ -347,7 +347,7 @@ def tasks():
 
 
 def _run_scan_bg(task_id: str, scan_type: str, poc: str, engine: str,
-                  resume_dir: str | None = None):
+                  resume_dir: str | None = None, region: str = ""):
     """后台线程执行扫描，完成后通过 DB 状态通知前端。"""
     from pathlib import Path as _Path
     from .log_handler import DBLogHandler
@@ -374,13 +374,15 @@ def _run_scan_bg(task_id: str, scan_type: str, poc: str, engine: str,
             results = run_categorized_incremental(poc, engine,
                                                    resume_from_dir=rf_dir,
                                                    task_id=task_id,
-                                                   stop_event=stop_event)
+                                                   stop_event=stop_event,
+                                                   region=region)
         else:
             from ..pipeline.orchestrator import run_categorized
             results = run_categorized(poc, engine,
                                        resume_from_dir=rf_dir,
                                        task_id=task_id,
-                                       stop_event=stop_event)
+                                       stop_event=stop_event,
+                                       region=region)
 
         step4_count = results.get("step4", 0)
         with _get_cursor() as cur:
@@ -421,6 +423,7 @@ def trigger_scan():
     scan_type = body.get("type", "categorized")
     poc = body.get("poc") or POC_DIR
     engine = body.get("engine", "fofa")
+    region = (body.get("region") or "").strip()
 
     if scan_type not in ("categorized", "categorized-incremental"):
         return jsonify({"error": "无效的扫描类型"}), 400
@@ -446,12 +449,12 @@ def trigger_scan():
     if task_id:
         t = threading.Thread(
             target=_run_scan_bg,
-            args=(task_id, scan_type, poc, engine),
+            args=(task_id, scan_type, poc, engine, None, region),
             daemon=True,
         )
         _scan_threads[task_id] = t
         t.start()
-        logger.info("启动后台扫描: %s type=%s poc=%s engine=%s", task_id, scan_type, poc, engine)
+        logger.info("启动后台扫描: %s type=%s poc=%s engine=%s region=%s", task_id, scan_type, poc, engine, region)
 
     return jsonify({"task_id": task_id, "status": "started"})
 

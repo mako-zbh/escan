@@ -1,10 +1,15 @@
 async function loadStats() {
   try {
     const data = await fetchAPI('/stats');
-    document.getElementById('statTemplates').textContent = data.template_count || 0;
-    document.getElementById('statAssets').textContent = data.asset_count || 0;
-    document.getElementById('statHosts').textContent = data.host_count || 0;
-    document.getElementById('statIcp').textContent = data.icp_count || 0;
+    const setStat = (id, val) => {
+      const el = document.getElementById(id);
+      el.classList.remove('skeleton');
+      el.textContent = val || 0;
+    };
+    setStat('statTemplates', data.template_count);
+    setStat('statAssets', data.asset_count);
+    setStat('statHosts', data.host_count);
+    setStat('statIcp', data.icp_count);
   } catch (e) {
     console.warn('Stats load failed:', e.message);
   }
@@ -13,6 +18,11 @@ async function loadStats() {
 function initSeverityPie() {
   const el = document.getElementById('severityPieChart');
   if (!el) return;
+  if (typeof echarts === 'undefined') {
+    console.warn('ECharts not loaded yet, retrying on load');
+    window.addEventListener('load', initSeverityPie, { once: true });
+    return;
+  }
   const chart = echarts.init(el);
 
   fetchAPI('/severity').then(data => {

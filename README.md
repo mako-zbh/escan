@@ -112,12 +112,21 @@ L1-L3 命中自动跳过 API 调用，`--force` 忽略查重。
 ### Pipeline — 扫描流水线
 
 ```bash
+# 基础用法
 escan pipeline categorized [poc_dir]              # 全量分类扫描
 escan pipeline categorized-incremental [poc_dir]   # 增量扫描（24h 缓存）
 escan pipeline categorized --resume                 # 从断点恢复
 escan pipeline search <query>                       # 单条资产查询
 escan pipeline status                               # 扫描状态概览
+
+# 地域筛选（可选，留空查全部）
+escan pipeline categorized --region CN              # 仅查中国资产
+escan pipeline categorized --region 北京            # 仅查北京
+escan pipeline categorized-incremental --region Shanghai
+escan pipeline search 'app="nginx"' --region 广东
 ```
+
+**地域筛选规则：** 2-3 位全大写字母（CN/US/HK）→ `country` 过滤，其余（中文或长英文）→ `region` 过滤。留空不追加过滤条件。
 
 **4 步流水线：** 资产收集 → Nuclei 扫描 → Host 提取 → ICP 备案查询
 
@@ -140,7 +149,7 @@ Dashboard 提供以下功能模块：
 | 漏洞总览 | Header「漏洞总览」 | 跨模板漏洞表：名称、资产、ICP 域名/备案号/主体、扫描时间 |
 | 漏洞筛选 | 总览页 Tab | 「全量」/「有ICP备案」切换，host 级别精确匹配 |
 | ICP 查询 | Header「ICP 查询」 | 输入域名或单位名，调用 MIIT 官方 API 查备案 |
-| 扫描控制 | Header「执行扫描」 | 选择扫描类型、引擎，提交后台任务，实时日志 |
+| 扫描控制 | Header「执行扫描」 | 选择扫描类型、引擎、地域筛选，提交后台任务，实时日志 |
 | 配置编辑 | Header「配置」 | 在线编辑 `.env` 文件，自动备份 |
 | CSV 导出 | 漏洞总览页 | 导出当前筛选结果为 CSV |
 

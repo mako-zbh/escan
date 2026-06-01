@@ -82,13 +82,15 @@ def load_checkpoint_from_db(task_id: str) -> dict | None:
 # --- 核心 API ---
 
 def init_checkpoint(out_dir: Path, scan_type: str, engine: str,
-                    poc_path: str, task_id: str | None = None) -> dict:
+                    poc_path: str, task_id: str | None = None,
+                    region: str = "") -> dict:
     """新建断点，所有步骤标记为 pending。"""
     data = {
         "scan_type": scan_type,
         "engine": engine,
         "poc_path": poc_path,
         "task_id": task_id,
+        "region": region,
         "output_dir": str(out_dir),
         "step1": "pending",
         "step2": "pending",
