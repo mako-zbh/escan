@@ -1,8 +1,10 @@
 """网络工具 — IP 校验、URL 解析"""
 
+import os
 import re
 import shutil
 from ..config import NUCLEI_PATH
+from ..logging_config import get_logger
 
 
 def is_ipv4(s: str) -> bool:
@@ -41,9 +43,33 @@ def extract_host_port(url: str) -> tuple[str, str, int]:
 
 
 def find_nuclei() -> str:
-    """定位 nuclei 二进制路径。"""
+    """定位 nuclei 二进制路径，兼容 Windows 路径处理。
+
+    Windows 注意事项：
+    1. 如果配置的路径不含 .exe，自动补全
+    2. 验证路径指向的文件确实存在
+    """
+    import sys
+
     if NUCLEI_PATH:
-        return NUCLEI_PATH
+        path = NUCLEI_PATH
+
+        # Windows：路径不含 .exe 时自动补全
+        if sys.platform == "win32" and not path.lower().endswith(".exe"):
+            if os.path.isfile(path + ".exe"):
+                path += ".exe"
+                logger = get_logger("utils.network")
+                logger.info("NUCLEI_PATH 自动补全 .exe: %s", path)
+
+        # 验证文件存在
+        if not os.path.isfile(path):
+            raise FileNotFoundError(
+                f"配置的 NUCLEI_PATH 指向的文件不存在: {path}\n"
+                "请检查 .env.local 中的 NUCLEI_PATH 是否正确"
+            )
+
+        return path
+
     found = shutil.which("nuclei")
     if found:
         return found

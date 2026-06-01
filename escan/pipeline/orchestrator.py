@@ -79,10 +79,24 @@ def get_status() -> dict:
 
 # --- 分类扫描（Categorized）---
 
-def _asset_record(url: str, engine: str, query_used: str) -> dict:
-    """构造单条资产记录。"""
-    host = None
-    port = None
+def _asset_record(asset, engine: str, query_used: str) -> dict:
+    """构造单条资产记录。
+
+    asset: FofaAsset 对象（fofa/hunter 统一返回）或 URL 字符串（向后兼容）。
+    """
+    from .fofa import FofaAsset, _normalize_dedup_key
+
+    if isinstance(asset, FofaAsset):
+        host = asset.ip or asset.host
+        return {
+            "url": asset.url, "host": host, "port": asset.port,
+            "scheme": asset.scheme, "query_used": query_used,
+            "title": asset.title,
+            "_dedup_key": asset.dedup_key,
+        }
+
+    # 向后兼容：纯 URL 字符串
+    url = asset
     scheme = "http"
     if "://" in url:
         scheme = url.split("://")[0]
@@ -91,13 +105,17 @@ def _asset_record(url: str, engine: str, query_used: str) -> dict:
         host_part = url.split("/")[0]
     if ":" in host_part:
         host, port_str = host_part.rsplit(":", 1)
-        port = int(port_str)
+        try:
+            port = int(port_str)
+        except ValueError:
+            port = 443 if scheme == "https" else 80
     else:
         host = host_part
         port = 443 if scheme == "https" else 80
     return {
         "url": url, "host": host, "port": port,
         "scheme": scheme, "query_used": query_used,
+        "_dedup_key": _normalize_dedup_key(scheme, host, port),
     }
 
 
@@ -156,40 +174,72 @@ def _collect_categorized_assets(
 
         try:
             assets = query_fn([tags])
-            assets = list(set(assets))  # 模板内去重
+            # assets 已按去重键去重（FofaAsset 列表），转为 URL 字符串用于文件输出
             categorized[filename] = assets
             logger.info(
                 "  [%s] %s → %d 条资产", filename, tags[:60], len(assets)
             )
         except Exception as e:
-            logger.error("  [%s] 查询失败: %s", filename, e)
+            logger.error(
+                "  [%s] 查询失败 | 模板: %s | 查询: %s | 错误: %s: %s",
+                filename, filename, tags[:100], type(e).__name__, e,
+            )
             categorized[filename] = []
 
         # 即时写入资产文件（崩溃安全）
         if categorized[filename]:
+            asset_urls = [a.url if hasattr(a, "url") else a for a in categorized[filename]]
             asset_file.write_text(
-                "\n".join(categorized[filename]) + "\n", encoding="utf-8"
+                "\n".join(asset_urls) + "\n", encoding="utf-8"
             )
 
         # 写入数据库
         if task_id and categorized[filename]:
             with get_cursor() as cur:
                 if cur is not None:
+                    from ..database.dao import get_existing_asset_keys
+
                     # 确保模板记录存在（满足 FK 约束）
                     upsert_poc_template(cur, {
                         "id": real_id,
                         "name": filename,
                         "severity": None,
                     })
+
                     records = [
-                        _asset_record(u, engine, tags)
-                        for u in categorized[filename]
+                        _asset_record(a, engine, tags)
+                        for a in categorized[filename]
                     ]
-                    db_insert_assets(cur, task_id, real_id, records, engine)
+
+                    # 跨任务去重：查询已有资产并过滤
+                    hosts = list({r["host"] for r in records if r.get("host")})
+                    existing_keys = get_existing_asset_keys(cur, hosts)
+                    if existing_keys:
+                        before = len(records)
+                        records = [r for r in records if r.get("_dedup_key") not in existing_keys]
+                        skipped = before - len(records)
+                        if skipped:
+                            logger.info(
+                                "  [%s] 跨任务去重: 跳过 %d 条已有资产",
+                                filename, skipped,
+                            )
+
+                    if records:
+                        try:
+                            db_insert_assets(cur, task_id, real_id, records, engine)
+                        except Exception as e:
+                            logger.error(
+                                "  [%s] 入库失败 | 模板: %s | 记录数: %d | 错误: %s: %s",
+                                filename, filename, len(records), type(e).__name__, e,
+                            )
 
     # 汇总 JSON 方便程序读取
+    _categorized_urls = {
+        k: [a.url if hasattr(a, "url") else a for a in v]
+        for k, v in categorized.items()
+    }
     (cat_dir / "categorized_assets.json").write_text(
-        json.dumps(categorized, ensure_ascii=False, indent=2), encoding="utf-8"
+        json.dumps(_categorized_urls, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
     # 写入扫描覆盖数据（先确保模板记录存在，满足 FK 约束）
@@ -883,9 +933,10 @@ def run_categorized_incremental(
 
                 try:
                     assets = single_query_fn(tags, size=100)
-                    assets = list(set(assets))
-                    categorized[template_name] = assets
-                    set_cached_assets(tags, assets, engine)
+                    # assets 已按去重键去重（FofaAsset 列表），转为 URL 字符串用于缓存和文件
+                    asset_urls = [a.url if hasattr(a, "url") else a for a in assets]
+                    categorized[template_name] = asset_urls
+                    set_cached_assets(tags, asset_urls, engine)
                     new_count += 1
                     logger.info("  [%s] %s → %d 条资产(新)", template_name, tags[:60], len(assets))
                 except Exception as e:

@@ -322,6 +322,11 @@ CREATE INDEX IF NOT EXISTS idx_icp_template_id ON icp_results(template_id);
 CREATE INDEX IF NOT EXISTS idx_icp_asset_id ON icp_results(asset_id);
 """),
 
+(7, "Add dedup query index on discovered_assets", """
+CREATE INDEX IF NOT EXISTS idx_assets_dedup_key
+    ON discovered_assets(lower(host), port, lower(scheme));
+"""),
+
 ]
 
 

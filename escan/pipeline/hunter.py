@@ -16,6 +16,7 @@ from ..config import (
     HUNTER_PROXY_API, HUNTER_PROXY_COOKIE,
 )
 from ..logging_config import get_logger
+from .fofa import FofaAsset, _normalize_dedup_key, _parse_url_parts
 
 logger = get_logger("pipeline.hunter")
 
@@ -101,7 +102,7 @@ def translate_fofa_to_hunter(query: str) -> str:
     return translated
 
 
-def _query_official(query: str, size: int = HUNTER_SIZE) -> list[str]:
+def _query_official(query: str, size: int = HUNTER_SIZE) -> list[FofaAsset]:
     """通过 Hunter 官方 API 查询，使用 API key 认证。"""
     hunter_query = translate_fofa_to_hunter(query)
 
@@ -113,9 +114,9 @@ def _query_official(query: str, size: int = HUNTER_SIZE) -> list[str]:
 
     page_size = min(size, 20)
     page = 1
-    all_urls = set()
+    seen: dict[tuple, FofaAsset] = {}
 
-    while len(all_urls) < size:
+    while len(seen) < size:
         params = {
             "api-key": HUNTER_API_KEY,
             "search": query_b64,
@@ -139,18 +140,36 @@ def _query_official(query: str, size: int = HUNTER_SIZE) -> list[str]:
 
         for item in arr:
             url = item.get("url", "")
-            if url:
-                all_urls.add(url)
+            if not url:
+                continue
+            scheme = "https" if url.startswith("https://") else "http"
+            host_part = url.split("://")[1].split("/")[0] if "://" in url else url.split("/")[0]
+            if ":" in host_part:
+                host, port_str = host_part.rsplit(":", 1)
+                try:
+                    port = int(port_str)
+                except ValueError:
+                    port = 443 if scheme == "https" else 80
+            else:
+                host = host_part
+                port = 443 if scheme == "https" else 80
+            asset = FofaAsset(
+                url=url, host=host, ip=item.get("ip"), port=port,
+                title=item.get("title"), scheme=scheme,
+            )
+            key = asset.dedup_key
+            if key not in seen:
+                seen[key] = asset
 
         total = data.get("data", {}).get("total", 0)
         if page * page_size >= total or page * page_size >= size:
             break
         page += 1
 
-    return list(all_urls)
+    return list(seen.values())
 
 
-def _query_proxy(query: str, size: int = HUNTER_SIZE) -> list[str]:
+def _query_proxy(query: str, size: int = HUNTER_SIZE) -> list[FofaAsset]:
     """通过代理接口查询 Hunter，使用 Cookie 认证。"""
     from urllib.parse import urlencode
 
@@ -187,18 +206,41 @@ def _query_proxy(query: str, size: int = HUNTER_SIZE) -> list[str]:
         raise RuntimeError(f"Hunter 代理接口错误: {errmsg}")
 
     # 代理接口返回 results 格式: [["host", "ip", "port", ...], ...]
-    urls = []
+    seen: dict[tuple, FofaAsset] = {}
     for row in result.get("results", []):
-        if row:
-            host = row[0]
-            if not host.startswith(("http://", "https://")):
-                host = f"http://{host}"
-            urls.append(host)
-    return list(set(urls))
+        if not row:
+            continue
+        raw_host = row[0] or ""
+        ip = row[1] if len(row) > 1 else None
+        raw_port = row[2] if len(row) > 2 else None
+        try:
+            fofa_port = int(raw_port) if raw_port not in (None, "") else None
+        except (ValueError, TypeError):
+            fofa_port = None
+
+        if not raw_host.startswith(("http://", "https://")):
+            raw_host = f"http://{raw_host}"
+
+        scheme, hostname, url_port = _parse_url_parts(raw_host)
+        # 优先使用 FOFA 返回的 port，其次从 URL 解析，最后用默认值
+        port = fofa_port if fofa_port is not None else url_port
+        if port is None:
+            port = 443 if scheme == "https" else 80
+
+        url = f"{scheme}://{hostname}:{port}"
+        asset = FofaAsset(
+            url=url, host=hostname, ip=ip, port=port,
+            scheme=scheme,
+        )
+        key = asset.dedup_key
+        if key not in seen:
+            seen[key] = asset
+
+    return list(seen.values())
 
 
-def query_hunter(query: str, size: int = HUNTER_SIZE) -> list[str]:
-    """查询 Hunter 资产，返回去重后的 URL 列表。
+def query_hunter(query: str, size: int = HUNTER_SIZE) -> list[FofaAsset]:
+    """查询 Hunter 资产，返回去重后的 FofaAsset 列表。
 
     自动选择模式：HUNTER_API_KEY 存在 → 官方 API，否则 → 代理接口。
     自动将 FOFA 语法翻译为 Hunter 语法，过滤不兼容片段。
@@ -208,19 +250,22 @@ def query_hunter(query: str, size: int = HUNTER_SIZE) -> list[str]:
     return _query_proxy(query, size)
 
 
-def query_hunter_multiple(queries: list[str], size: int = HUNTER_SIZE) -> list[str]:
-    """批量查询多条 Hunter 语句，去重合并。"""
-    all_assets = []
+def query_hunter_multiple(queries: list[str], size: int = HUNTER_SIZE) -> list[FofaAsset]:
+    """批量查询多条 Hunter 语句，按去重键合并。"""
+    seen: dict[tuple, FofaAsset] = {}
     for i, query in enumerate(queries):
         if i > 0:
             time.sleep(1.5)
         try:
             assets = query_hunter(query, size)
             logger.info("Hunter 查询: %s... → %d 条", query[:60], len(assets))
-            all_assets.extend(assets)
+            for a in assets:
+                key = a.dedup_key
+                if key not in seen:
+                    seen[key] = a
         except Exception as e:
             logger.error("Hunter 查询失败: %s... → %s", query[:60], e)
 
-    merged = list(set(all_assets))
+    merged = list(seen.values())
     logger.info("Hunter 批量查询完成: %d 条查询 → %d 条去重资产", len(queries), len(merged))
     return merged

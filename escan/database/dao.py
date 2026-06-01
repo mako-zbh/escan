@@ -99,6 +99,22 @@ def complete_scan_task(cursor, task_id: str, status: str, counts: dict, error: s
 
 # === discovered_assets ===
 
+def get_existing_asset_keys(cursor, hosts: list[str]) -> set[tuple[str, str, int]]:
+    """查询指定 hosts 在数据库中已存在的 (scheme, host, port) 组合。
+
+    用于跨任务去重：入库前调用，过滤掉已存在的资产。
+    返回空集当 cursor 为 None（兼容无数据库模式）。
+    """
+    if cursor is None or not hosts:
+        return set()
+    cursor.execute("""
+        SELECT DISTINCT lower(scheme), lower(host), port
+        FROM discovered_assets
+        WHERE host = ANY(%s) AND host IS NOT NULL AND port IS NOT NULL
+    """, (hosts,))
+    return {(row[0], row[1], row[2]) for row in cursor.fetchall()}
+
+
 def insert_discovered_assets(cursor, task_id: str, template_id: str,
                               asset_records: list[dict], engine: str) -> int:
     """批量插入资产，跳过重复，同步写入全局 URL 注册表。"""
@@ -111,9 +127,12 @@ def insert_discovered_assets(cursor, task_id: str, template_id: str,
     for r in asset_records:
         url = r["url"]
         url_hash = md5(url.encode()).hexdigest()[:12]
+        port = r.get("port")
+        if not isinstance(port, int):
+            port = None  # 防御：非 int 端口存 NULL，上游清洗应已确保类型正确
         rows.append((
             str(uuid.uuid4()), task_id, template_id,
-            url, r.get("host"), r.get("port"), r.get("scheme", "http"),
+            url, r.get("host"), port, r.get("scheme", "http"),
             r.get("title"), engine, r.get("query_used"),
             url_hash,
         ))
