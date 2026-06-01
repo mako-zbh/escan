@@ -12,11 +12,58 @@ cd frontend && npm install && cd ..
 # 配置环境变量
 cp .env .env.local   # 编辑 .env.local 填入真实值
 
+# 初始化数据库（首次使用）
+uv run python scripts/init_db.py --create
+
 # 启动 Web 服务（API :5050 + Dashboard :3000）
 uv run escan server
 ```
 
 浏览器打开 `http://localhost:3000`。
+
+## 前端开发
+
+前端是一个纯静态 Dashboard（HTML + CSS + 原生 JS），Express 仅做静态文件服务。
+
+```bash
+cd frontend
+npm install           # 安装 Express
+
+# 开发模式（修改即时生效，刷新浏览器即可）
+node server.js        # → http://localhost:3000
+
+# 单独启动（不依赖后端 API 时首页仍可渲染，数据区显示加载失败）
+```
+
+### 文件结构
+
+```
+frontend/
+├── server.js              # Express 静态服务（1 个依赖）
+├── package.json
+└── public/
+    ├── index.html          # 单页入口
+    ├── css/
+    │   └── style.css       # 全局样式（CSS 变量 + 响应式 + Toast）
+    └── js/
+        ├── utils.js        # 公共工具（escapeHtml / truncate / debounce / showToast）
+        ├── api.js          # API 请求封装
+        ├── app.js          # 初始化入口
+        ├── dashboard.js    # 统计卡片 + ECharts 饼图
+        ├── templates.js    # 模板库表格 + 分页
+        ├── detail.js       # 模板详情 + 子视图切换
+        ├── scan.js         # 扫描面板 + 任务轮询 + 日志
+        ├── config.js       # 配置文件编辑器
+        ├── vuln.js         # 漏洞总览弹窗 + CSV 导出
+        └── icp_query.js    # MIIT ICP 备案直接查询
+```
+
+### 风格要点
+
+- **组件化 CSS**：模态窗口、按钮、分页均使用基础类 + 变体，减少重复
+- **响应式**：1024px（卡片双列，面板纵向堆叠）、640px（移动端适配）
+- **无框架**：零构建步骤，纯原生 JS + ECharts CDN
+- **后端 API**：默认连接 `http://localhost:5050/api`（需 `escan server` 启动）
 
 ## 架构
 

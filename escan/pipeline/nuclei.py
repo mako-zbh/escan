@@ -22,6 +22,16 @@ def scan(
     Returns:
         nuclei 进程退出码
     """
+    # 前置校验：模板路径必须存在，否则跳过（不再调用 nuclei）
+    if not os.path.isfile(template):
+        logger.warning("跳过扫描：模板文件不存在 → %s", template)
+        return 1
+
+    # 前置校验：目标文件不能为空
+    if not os.path.isfile(target_file) or os.path.getsize(target_file) == 0:
+        logger.warning("跳过扫描：目标文件为空或不存在 → %s", target_file)
+        return 1
+
     nuclei = find_nuclei()
 
     cmd = [

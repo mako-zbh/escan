@@ -346,6 +346,21 @@ def tasks():
         return jsonify(_serialize(_rows_to_dicts(cur, columns)))
 
 
+def _sync_output_dir_from_checkpoint(cur, task_id: str):
+    """从断点快照回写 output_dir（停止/异常时补全 DB 记录）。"""
+    from pathlib import Path as _P
+    cur.execute(
+        "SELECT state->>'output_dir' FROM checkpoint_snapshots WHERE task_id = %s",
+        (task_id,),
+    )
+    row = cur.fetchone()
+    if row and row[0] and _P(row[0]).is_dir():
+        cur.execute(
+            "UPDATE scan_tasks SET output_dir = %s WHERE task_id = %s",
+            (row[0], task_id),
+        )
+
+
 def _run_scan_bg(task_id: str, scan_type: str, poc: str, engine: str,
                   resume_dir: str | None = None, region: str = ""):
     """后台线程执行扫描，完成后通过 DB 状态通知前端。"""
@@ -385,8 +400,15 @@ def _run_scan_bg(task_id: str, scan_type: str, poc: str, engine: str,
                                        region=region)
 
         step4_count = results.get("step4", 0)
+        real_output_dir = results.get("output_dir", "")
         with _get_cursor() as cur:
             if cur is not None:
+                # 回写真实输出目录（创建任务时用了占位字符串）
+                if real_output_dir:
+                    cur.execute(
+                        "UPDATE scan_tasks SET output_dir = %s WHERE task_id = %s",
+                        (real_output_dir, task_id),
+                    )
                 complete_scan_task(cur, task_id, "completed", {
                     "step1": results.get("step1", 0),
                     "step2": results.get("step2", 0),
@@ -402,6 +424,7 @@ def _run_scan_bg(task_id: str, scan_type: str, poc: str, engine: str,
             logger.info("后台扫描已停止: %s", task_id)
             with _get_cursor() as cur:
                 if cur is not None:
+                    _sync_output_dir_from_checkpoint(cur, task_id)
                     insert_scan_log(cur, task_id, None, "WARNING", "扫描被用户停止")
         else:
             logger.error("后台扫描失败: %s %s", task_id, str(e))
@@ -505,30 +528,37 @@ def scan_logs(task_id):
 def stop_scan(task_id):
     """停止正在运行的扫描任务。"""
     stop_event = _scan_stop_events.get(task_id)
-    if stop_event is None:
-        # 任务可能已结束或不存在
-        with get_cursor() as cur:
-            if cur is not None:
-                cur.execute(
-                    "SELECT status FROM scan_tasks WHERE task_id = %s",
-                    (task_id,),
-                )
-                row = cur.fetchone()
-                if not row:
-                    return jsonify({"error": "task not found"}), 404
-                return jsonify({"error": f"任务状态为 {row[0]}，无法停止"}), 400
-        return jsonify({"error": "task not found"}), 404
 
-    stop_event.set()
+    # 情况 1：正常停止（stop_event 存在）
+    if stop_event is not None:
+        stop_event.set()
 
+    # 情况 2：stop_event 不存在（服务重启导致内存丢失），允许强制标记停止
     with get_cursor() as cur:
         if cur is not None:
+            cur.execute(
+                "SELECT status FROM scan_tasks WHERE task_id = %s",
+                (task_id,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return jsonify({"error": "task not found"}), 404
+
+            current_status = row[0]
+            if current_status not in ("running", "started"):
+                return jsonify({"error": f"任务状态为 {current_status}，无法停止"}), 400
+
+            # 写入日志记录强制停止
+            from ..database.dao import insert_scan_log
+            if stop_event is None:
+                insert_scan_log(cur, task_id, None, "WARNING",
+                                "强制停止：服务可能重启导致线程丢失")
             cur.execute(
                 "UPDATE scan_tasks SET status = 'stopped', completed_at = NOW() WHERE task_id = %s",
                 (task_id,),
             )
 
-    logger.info("停止扫描: %s", task_id)
+    logger.info("停止扫描: %s (stop_event=%s)", task_id, stop_event is not None)
     return jsonify({"task_id": task_id, "status": "stopped"})
 
 

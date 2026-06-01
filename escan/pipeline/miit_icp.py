@@ -1,27 +1,28 @@
-"""
-MIIT ICP 备案查询 — 基于 ICP_Query 项目的官方工信部 API。
-
-集成路径：直接导入 ../ICP_Query 中的 beian 类，通过 asyncio 桥接
-为同步调用，供 pipeline 流程直接使用。
-
-beian 内置 IPv6 本地地址池轮换（Linux/macOS 自动检测），无需外部代理。
+"""MIIT ICP 备案查询 — 基于内嵌 ICP_Query 引擎，全面替代爱站/ip138。
 
 用法:
-    from .miit_icp import query_icp_batch
-    results = query_icp_batch(["qq.com", "baidu.com"])
-    # results: [{"domain": "qq.com", "unitName": "...", "mainLicence": "...", ...}]
+    from .miit_icp import query_icp_batch, format_output
+
+    # IP 查询
+    results = query_icp_batch(["1.2.3.4", "example.com"])
+    # results: [{"ip": "1.2.3.4", "results": [{"domain": "...", "icp": "...", ...}], "error": None}]
+
+    # 格式化
+    print(format_output(results, label="模板名"))
 """
 
 import os
 import sys
 import asyncio
+import time
 from pathlib import Path
 
 from ..logging_config import get_logger
 
 logger = get_logger("pipeline.miit_icp")
 
-_ICP_QUERY_DIR = Path(__file__).resolve().parent.parent.parent.parent / "ICP_Query"
+# 内嵌的 ICP_Query 目录
+_ICP_QUERY_DIR = Path(__file__).resolve().parent / "icp_query"
 
 if str(_ICP_QUERY_DIR) not in sys.path:
     sys.path.insert(0, str(_ICP_QUERY_DIR))
@@ -49,78 +50,140 @@ def _get_beian():
 
 
 async def _query_single_async(name: str, page_size: int = 20) -> dict:
-    """异步查询单个域名/单位的 ICP 备案信息。"""
+    """异步查询单个域名/IP/单位的 ICP 备案信息。"""
     myicp = _get_beian()
     return await myicp.ymWeb(name, pageNum=1, pageSize=str(page_size), proxy="")
 
 
-def query_icp_single(name: str) -> dict:
-    """同步查询单个域名的 ICP 备案信息。
+def _parse_miit_results(data: dict, query_name: str) -> list[dict]:
+    """将 MIIT API 返回解析为统一格式。"""
+    results = []
+    if data.get("code") == 200 and data.get("params"):
+        for item in data["params"].get("list", []):
+            results.append({
+                "domain": item.get("domain", ""),
+                "icp": item.get("mainLicence", ""),
+                "source": "miit",
+                "unitName": item.get("unitName", ""),
+                "natureName": item.get("natureName", ""),
+                "leaderName": item.get("leaderName", ""),
+                "serviceLicence": item.get("serviceLicence", ""),
+                "limitAccess": item.get("limitAccess", ""),
+                "contentTypeName": item.get("contentTypeName", ""),
+                "updateRecordTime": item.get("updateRecordTime", ""),
+                "domainId": item.get("domainId"),
+                "mainId": item.get("mainId"),
+                "serviceId": item.get("serviceId"),
+                "total": data["params"].get("total", 0),
+            })
+    return results
 
-    Returns:
-        {
-            "code": 200/500,
-            "params": {
-                "list": [{"domain": "...", "unitName": "...", "mainLicence": "...", ...}],
-                "total": int
-            }
-        }
-    """
+
+def query_icp_single(name: str) -> dict:
+    """同步查询单个域名/IP 的 ICP 备案信息。"""
     try:
-        return asyncio.run(_query_single_async(name))
+        raw = asyncio.run(_query_single_async(name))
+        results = _parse_miit_results(raw, name)
+        return {
+            "code": raw.get("code", 500),
+            "params": raw.get("params", {}),
+            "results": results,
+        }
     except Exception as e:
         logger.error("MIIT ICP 查询失败: %s → %s", name, e)
-        return {"code": 500, "message": str(e)}
+        return {"code": 500, "message": str(e), "results": []}
 
 
-def query_icp_batch(domains: list[str], concurrency: int = 5) -> list[dict]:
-    """同步批量查询多个域名的 ICP 备案信息。
+def query_icp_batch(hosts: list[str], concurrency: int = 3) -> list[dict]:
+    """批量查询 IP/域名，返回格式兼容旧的 aizhan batch_query_icp。
 
     Returns:
-        [{"ip": domain_or_ip, "results": [{"domain": ..., "icp": ..., "icp_api": {...}}], "error": None}, ...]
-        格式与旧 aizhan batch_query_icp 兼容。
+        [{"ip": host, "results": [{"domain": ..., "icp": ..., ...}], "error": None}, ...]
     """
-    if not domains:
+    if not hosts:
         return []
 
     semaphore = asyncio.Semaphore(concurrency)
 
-    async def _query_one(name: str) -> dict:
+    async def _query_one(host: str) -> dict:
         async with semaphore:
             try:
-                data = await _query_single_async(name)
-                results = []
-                if data.get("code") == 200 and data.get("params"):
-                    for item in data["params"].get("list", []):
-                        results.append({
-                            "domain": item.get("domain", ""),
-                            "icp": item.get("mainLicence", ""),
-                            "source": "miit",
-                            "icp_api": {
-                                "unitName": item.get("unitName", ""),
-                                "natureName": item.get("natureName", ""),
-                                "leaderName": item.get("leaderName", ""),
-                                "serviceLicence": item.get("serviceLicence", ""),
-                                "limitAccess": item.get("limitAccess", ""),
-                                "contentTypeName": item.get("contentTypeName", ""),
-                                "updateRecordTime": item.get("updateRecordTime", ""),
-                                "domainId": item.get("domainId"),
-                                "mainId": item.get("mainId"),
-                                "serviceId": item.get("serviceId"),
-                                "total": data["params"].get("total", 0),
-                            },
-                        })
-                return {"ip": name, "results": results, "error": None}
+                raw = await _query_single_async(host)
+                results = _parse_miit_results(raw, host)
+                return {"ip": host, "results": results, "error": None}
             except Exception as e:
-                logger.error("MIIT ICP 查询异常: %s → %s", name, e)
-                return {"ip": name, "results": [], "error": str(e)}
+                logger.error("MIIT ICP 查询异常 [%s]: %s", host, e)
+                return {"ip": host, "results": [], "error": str(e)}
 
     async def _batch():
-        tasks = [_query_one(d) for d in domains]
+        tasks = [_query_one(h) for h in hosts]
         return await asyncio.gather(*tasks)
 
     try:
-        return asyncio.run(_batch())
+        domain_results = asyncio.run(_batch())
+        return list(domain_results)
     except Exception as e:
         logger.error("MIIT ICP 批量查询失败: %s", e)
-        return [{"ip": d, "results": [], "error": str(e)} for d in domains]
+        return [{"ip": h, "results": [], "error": str(e)} for h in hosts]
+
+
+# ---------------------------------------------------------------------------
+# 格式化输出（兼容旧的 format_output）
+# ---------------------------------------------------------------------------
+
+def format_output(all_results: list[dict], label: str = "") -> str:
+    """格式化 ICP 查询结果。"""
+    lines = [
+        "=" * 70,
+        f"模板: {label}" if label else "",
+        f"ICP 备案查询结果（{time.strftime('%Y-%m-%d %H:%M:%S')}）",
+        "数据源: MIIT 官方 API (ICP_Query)",
+        "=" * 70,
+    ]
+    total_domains = 0
+    total_icp = 0
+    valid_count = 0
+
+    for item in all_results:
+        if item.get("error") or not item.get("results"):
+            continue
+        valid_count += 1
+        lines.append(f"\n> {item['ip']}")
+        for entry in item["results"]:
+            domain = entry.get("domain") or "-"
+            icp = entry.get("icp") or "-"
+            unit = entry.get("unitName") or "-"
+            nature = entry.get("natureName") or ""
+            update_time = entry.get("updateRecordTime") or ""
+            lines.append(f"  域名: {domain:<35s}  备案号: {icp}")
+            lines.append(f"  {' ' * 5} 主办单位: {unit}")
+            if nature:
+                lines.append(f"  {' ' * 5} 单位性质: {nature}")
+            if update_time:
+                lines.append(f"  {' ' * 5} 审核时间: {update_time}")
+            total_domains += 1
+            if icp != "-":
+                total_icp += 1
+
+    lines += [
+        "",
+        "=" * 70,
+        f"统计: 查询 {len(all_results)} 个 host | 有数据 {valid_count} | "
+        f"域名 {total_domains} | 有备案号 {total_icp}",
+        "=" * 70,
+    ]
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# 旧接口兼容别名
+# ---------------------------------------------------------------------------
+
+def batch_query_icp(hosts: list[str], concurrency: int = 3) -> list[dict]:
+    """兼容旧 icp.batch_query_icp 调用。"""
+    return query_icp_batch(hosts, concurrency)
+
+
+def enrich_icp_with_api(all_results: list[dict]) -> list[dict]:
+    """兼容旧接口 — MIIT API 已包含完整数据，无需额外补充。"""
+    return all_results

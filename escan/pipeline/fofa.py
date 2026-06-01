@@ -202,31 +202,37 @@ def _query_proxy(query: str, size: int = FOFA_SIZE) -> list[FofaAsset]:
 
 
 @retry(max_retries=2, base_delay=2.0)
-def query_fofa(query: str, size: int = FOFA_SIZE) -> list[FofaAsset]:
+def query_fofa(query: str, size: int = FOFA_SIZE, label: str = "") -> list[FofaAsset]:
     """查询 FOFA 资产，返回去重后的 FofaAsset 列表。
-
     自动选择模式：FOFA_KEY 存在 → 官方 API，否则 → 代理接口。
+    label: 可选模板名，错误日志附带。
     """
-    if _use_official_api():
-        return _query_official(query, size)
-    return _query_proxy(query, size)
+    try:
+        if _use_official_api():
+            return _query_official(query, size)
+        return _query_proxy(query, size)
+    except Exception as e:
+        if label:
+            logger.error("FOFA 查询错误 [%s]: %s... → %s", label, query[:60], e)
+        raise
 
 
-def query_fofa_multiple(queries: list[str], size: int = FOFA_SIZE) -> list[FofaAsset]:
-    """批量查询多条 FOFA 语句，按去重键合并。"""
+def query_fofa_multiple(queries: list[str], size: int = FOFA_SIZE,
+                         label: str = "") -> list[FofaAsset]:
+    """批量查询多条 FOFA 语句，按去重键合并。label: 可选模板名。"""
     seen: dict[tuple, FofaAsset] = {}
     for i, query in enumerate(queries):
         if i > 0:
             time.sleep(1.5)
         try:
-            assets = query_fofa(query, size)
+            assets = query_fofa(query, size, label=label)
             logger.info("FOFA 查询: %s... → %d 条", query[:60], len(assets))
             for a in assets:
                 key = a.dedup_key
                 if key not in seen:
                     seen[key] = a
         except Exception as e:
-            logger.error("FOFA 查询失败: %s... → %s", query[:60], e)
+            logger.error("FOFA 查询失败 [%s]: %s... → %s", label or "-", query[:60], e)
 
     merged = list(seen.values())
     logger.info("FOFA 批量查询完成: %d 条查询 → %d 条去重资产", len(queries), len(merged))

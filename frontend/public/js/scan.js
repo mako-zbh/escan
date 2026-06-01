@@ -61,12 +61,18 @@ async function triggerScan() {
 
 function startPolling() {
   stopPolling();
-  scanPollTimer = setInterval(() => {
-    loadAllTasks();
-    // Only fetch logs for running tasks when not viewing a log modal
-    if (openLogTaskId) {
-      refreshLogDetail(openLogTaskId);
-    }
+  scanPollTimer = setInterval(function() {
+    loadAllTasks().then(function() {
+      // 为运行中的任务拉取日志预览
+      var rows = document.querySelectorAll('.scan-task-item');
+      rows.forEach(function(row) {
+        var status = row.dataset.status;
+        if (status === 'running' || status === 'started') {
+          fetchLogsSince(row.dataset.taskId);
+        }
+      });
+      if (openLogTaskId) refreshLogDetail(openLogTaskId);
+    });
   }, 3000);
 }
 
@@ -101,6 +107,7 @@ async function loadAllTasks() {
 function renderTaskItem(t) {
   const statusMap = { running: '运行中', completed: '已完成', failed: '失败', started: '等待中', stopped: '已停止' };
   const typeMap = { categorized: '分类全量', 'categorized-incremental': '增量分类' };
+  const stepNames = ['', '资产收集', '模板扫描', '主机提取', 'ICP 查询'];
 
   let actions = '<button class="btn btn-ghost" onclick="toggleLogDetail(\'' + Utils.escapeHtml(t.task_id) + '\')">查看日志</button>';
 
@@ -118,6 +125,12 @@ function renderTaskItem(t) {
   const stepLabels = ['资产', '扫描', '主机', 'ICP'];
   const stepCounts = [t.step1_assets, t.step2_vulns, t.step3_hosts, t.step4_icp];
 
+  // 当前步骤摘要
+  let stepSummary = '';
+  if (t.status === 'running' && cs > 0 && cs <= 4) {
+    stepSummary = '<div class="scan-step-summary">Step ' + cs + ' — ' + stepNames[cs] + '</div>';
+  }
+
   let dots = '';
   for (let i = 0; i < 4; i++) {
     let cls = '';
@@ -129,12 +142,23 @@ function renderTaskItem(t) {
     dots += '<div class="scan-step-dot ' + cls + '" title="' + stepLabels[i] + ': ' + (stepCounts[i] || 0) + '"></div>';
   }
 
+  // 日志预览：取最近的模板级进度日志（过滤掉纯粹的 FOFA 错误/retry 日志）
   const cache = taskLogCache[t.task_id];
-  const previewLogs = (cache && cache.logs) ? cache.logs.slice(-2) : [];
+  const allLogs = (cache && cache.logs) ? cache.logs : [];
+  const previewLogs = allLogs
+    .filter(function(l) {
+      const m = l.message || '';
+      // 过滤掉纯错误日志（FOFA 查询失败、retry 等），保留进度日志
+      if (m.indexOf('失败') !== -1 && m.indexOf('FOFA') !== -1) return false;
+      if (m.indexOf('重试') !== -1) return false;
+      return true;
+    })
+    .slice(-4);
+
   let logPreview = '';
   if (previewLogs.length) {
-    logPreview = previewLogs.map(l => {
-      return '<div class="scan-log-preview">' + Utils.escapeHtml(l.message) + '</div>';
+    logPreview = previewLogs.map(function(l) {
+      return '<div class="scan-log-preview">' + Utils.escapeHtml(Utils.truncate(l.message, 80)) + '</div>';
     }).join('');
   }
 
@@ -151,6 +175,7 @@ function renderTaskItem(t) {
     '<div class="scan-task-steps">' + dots + '</div>',
     '<span class="scan-task-time">' + timeStr + '</span>',
     '</div>',
+    stepSummary,
     logPreview,
     '<div class="scan-task-actions">', actions, '</div>',
     '</div>'
@@ -217,10 +242,24 @@ function refreshLogDetail(taskId) {
     body.innerHTML = '<div class="placeholder">暂无日志</div>';
     return;
   }
-  body.innerHTML = cache.logs.map(l => {
+
+  // 合并连续相同日志：相同 message + level → 显示重复次数
+  const collapsed = [];
+  for (const l of cache.logs) {
+    const last = collapsed[collapsed.length - 1];
+    if (last && last.message === l.message && last.level === l.level) {
+      last.count = (last.count || 1) + 1;
+      last.lastTime = l.created_at;
+    } else {
+      collapsed.push({ message: l.message, level: l.level, created_at: l.created_at, count: 1 });
+    }
+  }
+
+  body.innerHTML = collapsed.map(l => {
     const cls = l.level === 'ERROR' ? 'error' : l.level === 'WARNING' ? 'warn' : '';
     const tm = l.created_at ? new Date(l.created_at).toLocaleTimeString('zh-CN') : '';
-    return '<div class="log-line ' + cls + '"><span class="log-time">' + tm + '</span><span class="log-msg">' + Utils.escapeHtml(l.message) + '</span></div>';
+    const repeat = l.count > 1 ? ' <span class="log-repeat">×' + l.count + '</span>' : '';
+    return '<div class="log-line ' + cls + '"><span class="log-time">' + tm + '</span><span class="log-msg">' + Utils.escapeHtml(l.message) + '</span>' + repeat + '</div>';
   }).join('');
   body.scrollTop = body.scrollHeight;
 }

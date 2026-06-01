@@ -43,39 +43,54 @@ def extract_host_port(url: str) -> tuple[str, str, int]:
 
 
 def find_nuclei() -> str:
-    """定位 nuclei 二进制路径，兼容 Windows 路径处理。
+    """定位 nuclei 二进制路径，兼容 Windows/Linux/macOS。
 
-    Windows 注意事项：
-    1. 如果配置的路径不含 .exe，自动补全
-    2. 验证路径指向的文件确实存在
+    查找顺序：
+    1. NUCLEI_PATH 环境变量（.env.local）
+    2. 系统 PATH
+    3. 常见安装位置（go install 默认路径）
     """
     import sys
 
     if NUCLEI_PATH:
         path = NUCLEI_PATH
-
-        # Windows：路径不含 .exe 时自动补全
         if sys.platform == "win32" and not path.lower().endswith(".exe"):
             if os.path.isfile(path + ".exe"):
                 path += ".exe"
-                logger = get_logger("utils.network")
-                logger.info("NUCLEI_PATH 自动补全 .exe: %s", path)
-
-        # 验证文件存在
         if not os.path.isfile(path):
             raise FileNotFoundError(
-                f"配置的 NUCLEI_PATH 指向的文件不存在: {path}\n"
-                "请检查 .env.local 中的 NUCLEI_PATH 是否正确"
+                f"配置的 NUCLEI_PATH 指向的文件不存在: {path}"
             )
-
         return path
 
+    # 系统 PATH
     found = shutil.which("nuclei")
     if found:
         return found
+
+    # 常见安装位置
+    candidates = []
+    if sys.platform == "win32":
+        home = os.environ.get("USERPROFILE", "")
+        candidates = [
+            os.path.join(home, "go", "bin", "nuclei.exe"),
+        ]
+    else:
+        home = os.environ.get("HOME", "")
+        candidates = [
+            os.path.join(home, "go", "bin", "nuclei"),
+            os.path.join(home, ".local", "bin", "nuclei"),
+            "/usr/local/bin/nuclei",
+        ]
+
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+
     raise FileNotFoundError(
-        "无法找到 nuclei 二进制。请设置 NUCLEI_PATH 环境变量，"
-        "或安装 nuclei: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest"
+        "无法找到 nuclei 二进制。\n"
+        "请将 nuclei 加入 PATH，或设置 NUCLEI_PATH 环境变量（.env.local）。\n"
+        "安装: go install -v github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest"
     )
 
 

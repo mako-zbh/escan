@@ -21,7 +21,7 @@ from ..utils.network import extract_tags_from_yaml, is_ipv4, extract_host_port
 from ..utils.files import timestamp_dir
 from .fofa import query_fofa_multiple, query_fofa
 from .nuclei import scan as nuclei_scan_fn
-from .icp import batch_query_icp, format_output, enrich_icp_with_api
+from .icp import query_ip as reverse_lookup_ip  # IP → 域名反查（ip138/爱站）
 from .cache import (
     get_cached_assets,
     set_cached_assets,
@@ -123,6 +123,7 @@ def _collect_categorized_assets(
     yaml_files: list[str], out_dir: Path, engine: str = "fofa",
     task_id: str = None, skip_existing: bool = False,
     region: str = "",
+    stop_event: threading.Event | None = None,
 ) -> dict[str, list[str]]:
     """Step 1 核心：逐模板查询 FOFA，资产按模板名分类保存（即时写入）。
 
@@ -172,8 +173,10 @@ def _collect_categorized_assets(
         if region_clause:
             tags = f"{tags} && {region_clause}"
 
+        _check_stop(stop_event)
+
         try:
-            assets = query_fn([tags])
+            assets = query_fn([tags], label=filename)
             # assets 已按去重键去重（FofaAsset 列表），转为 URL 字符串用于文件输出
             categorized[filename] = assets
             logger.info(
@@ -266,24 +269,26 @@ def _collect_categorized_assets(
 
 def run_categorized_step1(poc_path: str, out_dir: Path, engine: str = "fofa",
                           task_id: str = None, skip_existing: bool = False,
-                          region: str = "") -> int:
+                          region: str = "",
+                          stop_event: threading.Event | None = None) -> int:
     """分类 Step 1：收集并分类资产。"""
-    if os.path.isfile(poc_path):
-        yaml_files = [poc_path]
+    poc_abs = os.path.abspath(poc_path)
+    if os.path.isfile(poc_abs):
+        yaml_files = [poc_abs]
     else:
         yaml_files = [
-            os.path.join(poc_path, f) for f in os.listdir(poc_path)
+            os.path.join(poc_abs, f) for f in os.listdir(poc_abs)
             if f.endswith((".yaml", ".yml"))
         ]
 
     if not yaml_files:
-        logger.error("%s 下未找到 YAML 文件", poc_path)
+        logger.error("%s 下未找到 YAML 文件", poc_abs)
         return 0
 
     logger.info("分类 Step 1 (%s): 读取 %d 个 POC 模板", engine.upper(), len(yaml_files))
     categorized = _collect_categorized_assets(
         yaml_files, out_dir, engine, task_id, skip_existing=skip_existing,
-        region=region,
+        region=region, stop_event=stop_event,
     )
     return sum(len(v) for v in categorized.values())
 
@@ -302,13 +307,16 @@ def run_categorized_step2(poc_path: str, out_dir: Path,
         logger.error("分类目录不存在: %s，请先执行 Step 1", cat_dir)
         return 0
 
-    if os.path.isfile(poc_path):
-        templates = {os.path.splitext(os.path.basename(poc_path))[0]: poc_path}
+    # 确保使用绝对路径（避免 Web 线程中相对路径不一致）
+    poc_abs = os.path.abspath(poc_path)
+
+    if os.path.isfile(poc_abs):
+        templates = {os.path.splitext(os.path.basename(poc_abs))[0]: poc_abs}
     else:
         templates = {}
-        for f in os.listdir(poc_path):
+        for f in os.listdir(poc_abs):
             if f.endswith((".yaml", ".yml")):
-                templates[os.path.splitext(f)[0]] = os.path.join(poc_path, f)
+                templates[os.path.splitext(f)[0]] = os.path.join(poc_abs, f)
 
     # 构建 filename → real YAML id 映射
     id_map: dict[str, str] = {}
@@ -319,6 +327,26 @@ def run_categorized_step2(poc_path: str, out_dir: Path,
     total_hits = 0
     all_lines: list[str] = []
     coverage: dict[str, dict] = {}  # template_name → {was_scanned, hits}
+
+    # 统计：有多少模板需要扫描 vs 跳过
+    pending_count = 0
+    skip_count = 0
+    no_asset_count = 0
+    for name in templates:
+        result_file = cat_dir / f"{name}_results.txt"
+        if skip_existing and result_file.is_file():
+            skip_count += 1
+            continue
+        asset_file = cat_dir / f"{name}_assets.txt"
+        if not asset_file.is_file() or asset_file.stat().st_size == 0:
+            no_asset_count += 1
+            continue
+        pending_count += 1
+
+    logger.info(
+        "分类 Step 2: %d 个模板 → 扫描 %d / 跳过(已有结果) %d / 无资产 %d",
+        len(templates), pending_count, skip_count, no_asset_count,
+    )
 
     for name, tpath in templates.items():
         real_id = id_map[name]
@@ -356,7 +384,16 @@ def run_categorized_step2(poc_path: str, out_dir: Path,
         tmp_targets = str(cat_dir / f"_{name}_targets.tmp")
         Path(tmp_targets).write_text("\n".join(assets) + "\n", encoding="utf-8")
 
-        nuclei_scan_fn(tmp_targets, tpath, str(result_file))
+        try:
+            nuclei_scan_fn(tmp_targets, tpath, str(result_file))
+        except FileNotFoundError as e:
+            logger.error("  [%s] nuclei 未找到: %s", name, e)
+            coverage[name] = {"was_scanned": False, "hits_found": 0}
+            continue
+        except Exception as e:
+            logger.error("  [%s] nuclei 执行异常: %s", name, e)
+            coverage[name] = {"was_scanned": False, "hits_found": 0}
+            continue
 
         hits = 0
         if result_file.is_file():
@@ -552,38 +589,39 @@ def run_categorized_step4(out_dir: Path, task_id: str = None,
 
         hosts = template_hosts[template_name]
         ips = [h for h in hosts if is_ipv4(h)]
-        direct_domains = [h for h in hosts if not is_ipv4(h)]
+        domains = [h for h in hosts if not is_ipv4(h)]
 
+        # Step A: IP → 域名反查（ip138/爱站）
         all_results = []
-        if ips:
-            all_results = batch_query_icp(ips)
-            total_ips += len(ips)
-
-        if direct_domains:
-            direct_entries = [
-                {"domain": d, "icp": None, "source": "targets"}
-                for d in direct_domains
-            ]
-            all_results.append({
-                "ip": "(域名)", "results": direct_entries, "error": None,
-            })
-
-        if all_results:
-            all_results = enrich_icp_with_api(all_results)
-
-        # MIIT 官方 ICP 查询补充：对域名做精确备案查询
-        if all_results and direct_domains:
+        ip_domains: set[str] = set()
+        for ip in ips:
             try:
-                from .miit_icp import query_icp_batch as miit_query_batch
-                miit_results = miit_query_batch(direct_domains)
-                # 合并 MIIT 结果到 all_results
+                res = reverse_lookup_ip(ip)
+                all_results.append(res)
+                total_ips += 1
+                for entry in res.get("results", []):
+                    d = entry.get("domain")
+                    if d:
+                        ip_domains.add(d)
+            except Exception as e:
+                logger.warning("  [%s] IP 反查失败: %s → %s", template_name, ip, e)
+                all_results.append({"ip": ip, "results": [], "error": str(e)})
+
+        # Step B: 域名 → MIIT ICP 备案（反查得到的域名 + nuclei 直接提取的域名）
+        from .miit_icp import query_icp_batch as miit_query_batch
+        from .miit_icp import format_output as miit_format
+
+        all_domains = list(ip_domains | set(domains))
+        if all_domains:
+            try:
+                miit_results = miit_query_batch(all_domains)
                 for miit_entry in miit_results:
                     if miit_entry.get("results"):
                         all_results.append(miit_entry)
             except Exception as e:
-                logger.warning("MIIT ICP 查询跳过: %s", e)
+                logger.error("  [%s] MIIT ICP 查询失败: %s", template_name, e)
 
-        output_line = format_output(all_results, template_name)
+        output_line = miit_format(all_results, template_name)
         new_entries.append(output_line + "\n")
 
         with open(icp_out, "a", encoding="utf-8") as f:
@@ -593,18 +631,18 @@ def run_categorized_step4(out_dir: Path, task_id: str = None,
         if task_id and all_results:
             with get_cursor() as cur:
                 if cur is not None:
-                    # 构建 IP → asset_id 映射，关联资产
+                    # 构建 IP → asset_id 映射
                     ip_asset_map = {}
-                    ips_to_query = [
+                    ips_for_map = [
                         e["ip"] for e in all_results
-                        if e.get("ip") and e["ip"] != "(域名)"
+                        if e.get("ip") and is_ipv4(e["ip"])
                     ]
-                    if ips_to_query:
+                    if ips_for_map:
                         cur.execute("""
                             SELECT DISTINCT ON (host) host, asset_id
                             FROM discovered_assets
                             WHERE task_id = %s AND host = ANY(%s)
-                        """, (task_id, ips_to_query))
+                        """, (task_id, ips_for_map))
                         ip_asset_map = {row[0]: row[1] for row in cur.fetchall()}
 
                     db_insert_icp(cur, task_id, all_results, template_name, ip_asset_map)
@@ -613,7 +651,6 @@ def run_categorized_step4(out_dir: Path, task_id: str = None,
                     ips_with_data = 0
                     domains_found = 0
                     domains_with_icp = 0
-                    icp_api_supplement = 0
 
                     for item in all_results:
                         if item.get("error") or not item.get("results"):
@@ -623,9 +660,6 @@ def run_categorized_step4(out_dir: Path, task_id: str = None,
                             domains_found += 1
                             if entry.get("icp"):
                                 domains_with_icp += 1
-                                has_data = True
-                            if entry.get("icp_api"):
-                                icp_api_supplement += 1
                                 has_data = True
                         if has_data:
                             ips_with_data += 1
@@ -638,7 +672,7 @@ def run_categorized_step4(out_dir: Path, task_id: str = None,
                         "ips_with_data": ips_with_data,
                         "domains_found": domains_found,
                         "domains_with_icp": domains_with_icp,
-                        "icp_api_supplement": icp_api_supplement,
+                        "icp_api_supplement": 0,
                     })
 
         # 标记模板完成（供断点追踪）
@@ -647,8 +681,8 @@ def run_categorized_step4(out_dir: Path, task_id: str = None,
             mark_step4_template_done(out_dir, task_id, template_name)
 
         logger.info(
-            "  [%s] ICP: %d 个 IP, %d 个域名",
-            template_name, len(ips), len(direct_domains),
+            "  [%s] ICP: %d 个 IP（反查）, %d 个域名（MIIT）",
+            template_name, len(ips), len(all_domains),
         )
 
     logger.info("分类 Step 4 完成: %d 个模板, %d 个 IP → %s",
@@ -780,22 +814,39 @@ def run_categorized(
         if not task_id:
             with get_cursor() as cur:
                 task_id = create_scan_task(cur, "categorized", engine, str(out_dir))
+        else:
+            # Web 触发时 task_id 已存在但 output_dir 是占位字符串，更新为真实路径
+            with get_cursor() as cur:
+                if cur is not None:
+                    cur.execute(
+                        "UPDATE scan_tasks SET output_dir = %s WHERE task_id = %s",
+                        (str(out_dir), task_id),
+                    )
         cp = init_checkpoint(out_dir, "categorized", engine, poc_path, task_id, region=region)
         resume_step = 1
 
     is_resume = resume_from_dir is not None
     assets_out = str(out_dir / f"{engine}_assets.txt")
 
-    # Step 1: 分类收集资产
+    total_templates = len([
+        f for f in os.listdir(os.path.abspath(poc_path))
+        if f.endswith((".yaml", ".yml"))
+    ]) if os.path.isdir(poc_path) else 1
+
+    # ==== Step 1: 资产收集 ====
     if resume_step <= 1:
+        logger.info("--- Step 1: FOFA 资产收集 (%d 个模板) ---", total_templates)
         mark_step_started(out_dir, task_id, 1)
         _update_task_step(task_id, 1)
         asset_count = run_categorized_step1(poc_path, out_dir, engine, task_id,
                                             skip_existing=is_resume,
-                                            region=region)
+                                            region=region,
+                                            stop_event=stop_event)
         mark_step_completed(out_dir, task_id, 1)
+        logger.info("Step 1 完成: 共收集 %d 条资产", asset_count)
     else:
         asset_count = _count_existing_assets(out_dir)
+        logger.info("Step 1 跳过（已完成）: %d 条资产", asset_count)
 
     # 汇总全部资产到 fofa_assets.txt（兼容）
     cat_dir = out_dir / "categorized"
@@ -809,29 +860,36 @@ def run_categorized(
     Path(assets_out).parent.mkdir(parents=True, exist_ok=True)
     Path(assets_out).write_text("\n".join(sorted(all_assets)) + "\n", encoding="utf-8")
 
-    # Step 2: 分类扫描
+    # ==== Step 2: Nuclei 扫描 ====
     if resume_step <= 2:
+        logger.info("--- Step 2: Nuclei 扫描 ---")
         mark_step_started(out_dir, task_id, 2)
         _update_task_step(task_id, 2)
         vuln_count = run_categorized_step2(poc_path, out_dir, task_id,
                                            skip_existing=is_resume,
                                            stop_event=stop_event)
         mark_step_completed(out_dir, task_id, 2)
+        logger.info("Step 2 完成: 共发现 %d 个漏洞", vuln_count)
     else:
         vuln_count = _count_existing_results(out_dir)
+        logger.info("Step 2 跳过（已完成）: %d 个漏洞", vuln_count)
 
-    # Step 3: 分类提取
+    # ==== Step 3: Host 提取 ====
     if resume_step <= 3:
+        logger.info("--- Step 3: Host/IP 提取 ---")
         mark_step_started(out_dir, task_id, 3)
         _update_task_step(task_id, 3)
         host_count = run_categorized_step3(out_dir, task_id,
                                            skip_existing=is_resume)
         mark_step_completed(out_dir, task_id, 3)
+        logger.info("Step 3 完成: 提取 %d 个 host", host_count)
     else:
         host_count = _count_existing_hosts(out_dir)
+        logger.info("Step 3 跳过（已完成）: %d 个 host", host_count)
 
-    # Step 4: ICP 查询
+    # ==== Step 4: ICP 备案查询 ====
     if resume_step <= 4:
+        logger.info("--- Step 4: ICP 备案查询 ---")
         processed = set(cp.get("step4_templates", [])) if is_resume else None
         mark_step_started(out_dir, task_id, 4)
         _update_task_step(task_id, 4)
@@ -840,14 +898,17 @@ def run_categorized(
                                          processed_templates=processed,
                                          stop_event=stop_event)
         mark_step_completed(out_dir, task_id, 4)
+        logger.info("Step 4 完成: 查询 %d 个 IP", ip_count)
     else:
         ip_count = _count_icp_entries(out_dir)
+        logger.info("Step 4 跳过（已完成）: %d 个 IP", ip_count)
 
     results = {
         "step1": asset_count,
         "step2": vuln_count,
         "step3": host_count,
         "step4": ip_count,
+        "output_dir": str(out_dir),
     }
 
     # 标记任务完成
@@ -912,13 +973,23 @@ def run_categorized_incremental(
             os.path.join(os.path.dirname(POC_DIR), "output", "pipeline")
         )
         logger.info("开始增量分类扫描 (%s)，输出目录: %s", engine.upper(), out_dir)
+        # Web 触发时 task_id 已存在但 output_dir 是占位字符串，更新为真实路径
+        if task_id:
+            with get_cursor() as cur:
+                if cur is not None:
+                    cur.execute(
+                        "UPDATE scan_tasks SET output_dir = %s WHERE task_id = %s",
+                        (str(out_dir), task_id),
+                    )
         cp = init_checkpoint(out_dir, "categorized_incremental", engine, poc_path, task_id, region=region)
         resume_step = 1
 
     is_resume = resume_from_dir is not None
 
-    # Step 1: 资产收集
+    # ==== Step 1: 资产收集 ====
     if resume_step <= 1:
+        logger.info("--- Step 1: 增量资产收集 (%d 个模板) ---",
+                     len(yaml_files) if not os.path.isfile(poc_path) else 1)
         mark_step_started(out_dir, None, 1)
 
         if os.path.isfile(poc_path):
@@ -933,7 +1004,8 @@ def run_categorized_incremental(
             # 恢复：用 step1 标准函数（自带 skip_existing + 缓存命中逻辑）
             asset_count = run_categorized_step1(poc_path, out_dir, engine,
                                                 task_id=None, skip_existing=True,
-                                                region=region)
+                                                region=region,
+                                                stop_event=stop_event)
         else:
             # 新建：原有缓存内联逻辑
             single_query_fn = _resolve_single_query_fn(engine)
@@ -959,7 +1031,7 @@ def run_categorized_incremental(
                     continue
 
                 try:
-                    assets = single_query_fn(tags, size=100)
+                    assets = single_query_fn(tags, size=100, label=template_name)
                     # assets 已按去重键去重（FofaAsset 列表），转为 URL 字符串用于缓存和文件
                     asset_urls = [a.url if hasattr(a, "url") else a for a in assets]
                     categorized[template_name] = asset_urls
@@ -1002,25 +1074,34 @@ def run_categorized_incremental(
     else:
         asset_count = _count_existing_assets(out_dir)
 
-    # Steps 2-4
+    # ==== Step 2: Nuclei 扫描 ====
     if resume_step <= 2:
+        logger.info("--- Step 2: Nuclei 扫描 ---")
         mark_step_started(out_dir, None, 2)
         vuln_count = run_categorized_step2(poc_path, out_dir, task_id,
                                            skip_existing=is_resume,
                                            stop_event=stop_event)
         mark_step_completed(out_dir, None, 2)
+        logger.info("Step 2 完成: 共发现 %d 个漏洞", vuln_count)
     else:
         vuln_count = _count_existing_results(out_dir)
+        logger.info("Step 2 跳过（已完成）: %d 个漏洞", vuln_count)
 
+    # ==== Step 3: Host 提取 ====
     if resume_step <= 3:
+        logger.info("--- Step 3: Host/IP 提取 ---")
         mark_step_started(out_dir, None, 3)
         host_count = run_categorized_step3(out_dir, task_id=None,
                                            skip_existing=is_resume)
         mark_step_completed(out_dir, None, 3)
+        logger.info("Step 3 完成: 提取 %d 个 host", host_count)
     else:
         host_count = _count_existing_hosts(out_dir)
+        logger.info("Step 3 跳过（已完成）: %d 个 host", host_count)
 
+    # ==== Step 4: ICP 备案查询 ====
     if resume_step <= 4:
+        logger.info("--- Step 4: ICP 备案查询 ---")
         processed = set(cp.get("step4_templates", [])) if is_resume else None
         mark_step_started(out_dir, None, 4)
         ip_count = run_categorized_step4(out_dir, task_id,
@@ -1028,14 +1109,17 @@ def run_categorized_incremental(
                                          processed_templates=processed,
                                          stop_event=stop_event)
         mark_step_completed(out_dir, None, 4)
+        logger.info("Step 4 完成: 查询 %d 个 IP", ip_count)
     else:
         ip_count = _count_icp_entries(out_dir)
+        logger.info("Step 4 跳过（已完成）: %d 个 IP", ip_count)
 
     results = {
         "step1": asset_count,
         "step2": vuln_count,
         "step3": host_count,
         "step4": ip_count,
+        "output_dir": str(out_dir),
     }
     logger.info("增量分类扫描完成: %s", results)
     return results

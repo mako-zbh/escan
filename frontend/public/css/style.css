@@ -449,17 +449,24 @@ a:hover { text-decoration: underline; }
 
 /* Log preview */
 .scan-log-preview {
-  margin-top: 6px;
+  margin-top: 2px;
   margin-left: 4px;
   padding-left: 10px;
   border-left: 2px solid var(--border);
   font-size: 11px;
   color: var(--text2);
   line-height: 1.6;
+  max-width: 650px;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 600px;
+  text-overflow: ellipsis;
+}
+
+.scan-step-summary {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 500;
 }
 
 .scan-task-actions { margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; }
@@ -571,6 +578,15 @@ a:hover { text-decoration: underline; }
 .log-line.warn { color: var(--yellow); }
 .log-time { color: var(--text3); margin-right: 10px; }
 .log-msg { color: var(--text); }
+.log-repeat {
+  color: var(--text3);
+  font-size: 11px;
+  background: var(--surface2);
+  border-radius: 3px;
+  padding: 0 6px;
+  margin-left: 8px;
+  white-space: nowrap;
+}
 
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes modalSlideIn {
