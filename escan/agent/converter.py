@@ -251,7 +251,7 @@ def convert_one(
                 result["level"] = match["level_name"]
                 return result
             elif match["level"] == 4:
-                logger.warning("标题相似 (L4): %s — %s", basename, match["reason"])
+                logger.warning("标题相似 (L4): %s → %s", basename, match["reason"])
 
         use_vision = "chat" in DEEPSEEK_MODEL.lower()
         logger.info("转换: %s (模式: %s)", basename,
@@ -294,7 +294,7 @@ def convert_one(
         result["success"] = True
 
     except Exception as e:
-        logger.error("转换失败: %s — %s", os.path.basename(md_path), e)
+        logger.error("转换失败: %s → %s", os.path.basename(md_path), e)
         result["error"] = str(e)
 
     return result

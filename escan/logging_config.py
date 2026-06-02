@@ -47,4 +47,4 @@ def setup_logging(name: str | None = None) -> logging.Logger:
 
 def get_logger(name: str) -> logging.Logger:
     """获取子模块 logger（继承根 logger 配置）。"""
-    return logging.getLogger(f"vulnscan.{name}")
+    return logging.getLogger(f"escan.{name}")

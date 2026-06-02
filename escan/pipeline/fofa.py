@@ -168,7 +168,7 @@ def _query_official(query: str, size: int = FOFA_SIZE) -> list[FofaAsset]:
         raise RuntimeError(f"FOFA 官方 API 错误: {errmsg}")
 
     assets = _parse_results(result)
-    logger.debug("FOFA 官方查询: %s... → %d 条", query[:60], len(assets))
+    logger.info("FOFA 官方查询: %s... → %d 条", query[:60], len(assets))
     return assets
 
 
@@ -197,7 +197,7 @@ def _query_proxy(query: str, size: int = FOFA_SIZE) -> list[FofaAsset]:
         raise RuntimeError(f"FOFA 代理接口错误: {errmsg}")
 
     assets = _parse_results(result)
-    logger.debug("FOFA 代理查询: %s... → %d 条", query[:60], len(assets))
+    logger.info("FOFA 代理查询: %s... → %d 条", query[:60], len(assets))
     return assets
 
 
@@ -213,7 +213,7 @@ def query_fofa(query: str, size: int = FOFA_SIZE, label: str = "") -> list[FofaA
         return _query_proxy(query, size)
     except Exception as e:
         if label:
-            logger.error("FOFA 查询错误 [%s]: %s... → %s", label, query[:60], e)
+            logger.error("FOFA 查询失败 [%s]: %s... → %s", label, query[:60], e)
         raise
 
 

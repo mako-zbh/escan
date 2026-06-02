@@ -100,7 +100,7 @@ def validate_and_retry(
             return yaml_content
 
         logger.warning(
-            "YAML 校验失败 (第 %d 次): %s — %s",
+            "YAML 校验失败 (第 %d 次): %s → %s",
             attempt + 1,
             os.path.basename(output_path),
             error[:200],

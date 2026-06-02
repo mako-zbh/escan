@@ -112,7 +112,7 @@ def query_icp_batch(hosts: list[str], concurrency: int = 3) -> list[dict]:
                 results = _parse_miit_results(raw, host)
                 return {"ip": host, "results": results, "error": None}
             except Exception as e:
-                logger.error("MIIT ICP 查询异常 [%s]: %s", host, e)
+                logger.error("MIIT ICP 查询失败 [%s]: %s", host, e)
                 return {"ip": host, "results": [], "error": str(e)}
 
     async def _batch():

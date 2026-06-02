@@ -87,7 +87,7 @@ def ocr_markdown_images(md_content: str, md_dir: str) -> str:
                 results.append(f"--- 截图: {os.path.basename(img_abs)} ---\n{text}")
                 logger.info("OCR 结果: %s...", text[:120])
         except Exception as e:
-            logger.error("OCR 失败: %s — %s", os.path.basename(img_abs), e)
+            logger.error("OCR 失败: %s → %s", os.path.basename(img_abs), e)
 
     return "\n\n".join(results)
 

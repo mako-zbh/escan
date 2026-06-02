@@ -373,8 +373,8 @@ def _run_scan_bg(task_id: str, scan_type: str, poc: str, engine: str,
 
     # 安装 DB 日志处理器，将 pipeline 日志实时写入 scan_logs
     db_handler = DBLogHandler(task_id, level=logging.INFO)
-    pipeline_logger = logging.getLogger("vulnscan.pipeline")
-    orche_logger = logging.getLogger("vulnscan.pipeline.orchestrator")
+    pipeline_logger = logging.getLogger("escan.pipeline")
+    orche_logger = logging.getLogger("escan.pipeline.orchestrator")
     pipeline_logger.addHandler(db_handler)
     orche_logger.addHandler(db_handler)
 
