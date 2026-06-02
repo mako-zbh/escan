@@ -1,25 +1,33 @@
-"""统一启动 Flask API + 前端开发服务器。"""
+"""Web 服务启动器 — 一键启动 FastAPI 后端 + Vite 前端。
+
+用法: uv run escan server
+"""
+
+from __future__ import annotations
 
 import os
-import subprocess
 import signal
+import subprocess
 import sys
 import time
 from pathlib import Path
 
 from ..config import ROOT_DIR
 
-_frontend_dir = ROOT_DIR / "frontend"
+_FRONTEND_DIR = ROOT_DIR / "frontend"
 
 
-def launch() -> None:
-    """启动后端 API (5050) 和前端 (3000)，Ctrl+C 同时停止。"""
+def launch():
+    """启动后端 (port 5050) 和前端 Vite dev server (port 5173)。
+
+    Ctrl+C 同时停止两个服务。
+    """
     procs: dict[str, subprocess.Popen] = {}
     shutdown = False
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
 
-    def _shutdown(sig=None, frame=None):
+    def _shutdown(_sig=None, _frame=None):
         nonlocal shutdown
         if shutdown:
             return
@@ -37,26 +45,30 @@ def launch() -> None:
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
-    # 后端 — 用 __main__ 方式避免 flask reload 的 RuntimeWarning
+    # 后端 — uvicorn
     api = subprocess.Popen(
-        [sys.executable, "-c",
-         "from escan.web.app import main; main()"],
+        [sys.executable, "-m", "uvicorn", "escan.web.app:app",
+         "--host", "0.0.0.0", "--port", "5050", "--log-level", "info"],
         stdout=sys.stdout, stderr=sys.stderr,
         env=env,
     )
     procs["api"] = api
-    print("VulnScan API:      http://localhost:5050")
 
-    # 前端
-    if _frontend_dir.is_dir() and (_frontend_dir / "node_modules").is_dir():
+    # 前端 — Vite dev server
+    if (_FRONTEND_DIR / "node_modules").is_dir():
         fe = subprocess.Popen(
-            ["npm", "start"],
-            cwd=str(_frontend_dir),
+            ["npm", "run", "dev"],
+            cwd=str(_FRONTEND_DIR),
             stdout=sys.stdout, stderr=sys.stderr,
             env=env,
         )
         procs["frontend"] = fe
-        print("VulnScan Dashboard: http://localhost:3000")
+
+    print()
+    print("  eScan v2.0")
+    print(f"  API 文档:  http://localhost:5050/api/docs")
+    print(f"  Dashboard: http://localhost:5173")
+    print()
 
     # 监控子进程
     while procs and not shutdown:
