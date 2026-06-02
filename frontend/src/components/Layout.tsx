@@ -19,6 +19,9 @@ export default function Layout() {
           <NavLink to="/vulnerabilities" className={({ isActive }) => isActive ? styles.active : ''}>
             漏洞概览
           </NavLink>
+          <NavLink to="/proxy" className={({ isActive }) => isActive ? styles.active : ''}>
+            代理池
+          </NavLink>
           <NavLink to="/config" className={({ isActive }) => isActive ? styles.active : ''}>
             配置
           </NavLink>

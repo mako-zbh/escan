@@ -79,3 +79,15 @@ DB_PASSWORD = _env("DB_PASSWORD", "")
 LOG_LEVEL = _env("LOG_LEVEL", "INFO")
 AGENT_CONCURRENCY = int(_env("AGENT_CONCURRENCY", "3"))
 SEARCH_ENGINE = _env("SEARCH_ENGINE", "fofa")  # fofa | hunter
+
+# --- 代理池 ---
+PROXY_FILE = _env("PROXY_FILE", "proxies.txt")  # 代理 IP 文件，一行一个，相对 ROOT_DIR
+PROXY_LIST = _env("PROXY_LIST")  # 逗号分隔的额外代理（与文件合并）
+PROXY_ENABLED_FOFA = _env("PROXY_ENABLED_FOFA", "0").lower() in ("1", "true")
+PROXY_ENABLED_HUNTER = _env("PROXY_ENABLED_HUNTER", "0").lower() in ("1", "true")
+PROXY_ENABLED_NUCLEI = _env("PROXY_ENABLED_NUCLEI", "0").lower() in ("1", "true")
+PROXY_ENABLED_ICP = _env("PROXY_ENABLED_ICP", "0").lower() in ("1", "true")
+PROXY_ENABLED_DEEPSEEK = _env("PROXY_ENABLED_DEEPSEEK", "0").lower() in ("1", "true")
+PROXY_STRATEGY = _env("PROXY_STRATEGY", "round_robin")  # round_robin | random
+PROXY_COOLDOWN = float(_env("PROXY_COOLDOWN", "60"))
+PROXY_MAX_FAILURES = int(_env("PROXY_MAX_FAILURES", "3"))

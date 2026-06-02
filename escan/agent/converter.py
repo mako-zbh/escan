@@ -15,9 +15,11 @@ from ..config import (
     DEEPSEEK_MODEL,
     POC_DIR,
     AGENT_CONCURRENCY,
+    PROXY_ENABLED_DEEPSEEK,
 )
 from ..logging_config import get_logger
 from ..utils.retry import retry
+from ..utils.proxy import get_proxy
 from ..utils.files import write_output
 from .prompts import build_system_prompt, load_examples_by_type, classify_vuln
 from .ocr import ocr_markdown_images, extract_images_base64
@@ -89,6 +91,7 @@ def call_deepseek(messages: list[dict]) -> str:
             "Content-Type": "application/json",
         },
         timeout=180,
+        proxies=get_proxy(PROXY_ENABLED_DEEPSEEK),
     )
     if resp.status_code != 200:
         raise RuntimeError(f"DeepSeek API {resp.status_code}: {resp.text[:500]}")

@@ -3,8 +3,10 @@
 import subprocess
 import os
 
+from ..config import PROXY_ENABLED_NUCLEI
 from ..logging_config import get_logger
 from ..utils.network import find_nuclei
+from ..utils.proxy import get_proxy_pool
 
 logger = get_logger("pipeline.nuclei")
 
@@ -46,6 +48,17 @@ def scan(
         cmd.extend(["-s", severity])
     if extra_args:
         cmd.extend(extra_args)
+
+    # 代理池：通过 nuclei -p 标志
+    if PROXY_ENABLED_NUCLEI:
+        pool = get_proxy_pool()
+        if pool:
+            p = pool.get_proxy()
+            if p:
+                proxy_url = p.get("http") or p.get("https")
+                if proxy_url:
+                    cmd.extend(["-p", proxy_url])
+                    logger.info("nuclei 代理: %s", proxy_url)
 
     logger.info("执行 nuclei: %s", " ".join(cmd))
 

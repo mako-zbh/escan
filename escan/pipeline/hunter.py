@@ -14,13 +14,13 @@ import requests
 from ..config import (
     HUNTER_API_KEY, HUNTER_API, HUNTER_SIZE,
     HUNTER_PROXY_API, HUNTER_PROXY_COOKIE,
+    PROXY_ENABLED_HUNTER,
 )
 from ..logging_config import get_logger
+from ..utils.proxy import get_proxy
 from .fofa import FofaAsset, _normalize_dedup_key, _parse_url_parts
 
 logger = get_logger("pipeline.hunter")
-
-_NO_PROXY = {"http": None, "https": None}
 
 # FOFA → Hunter 字段名映射
 _FIELD_MAP = {
@@ -125,7 +125,7 @@ def _query_official(query: str, size: int = HUNTER_SIZE) -> list[FofaAsset]:
             "is_web": 1,
         }
 
-        resp = requests.get(HUNTER_API, params=params, timeout=30, proxies=_NO_PROXY)
+        resp = requests.get(HUNTER_API, params=params, timeout=30, proxies=get_proxy(PROXY_ENABLED_HUNTER))
         resp.raise_for_status()
         data = resp.json()
 
@@ -198,7 +198,7 @@ def _query_proxy(query: str, size: int = HUNTER_SIZE) -> list[FofaAsset]:
         data=body,
         headers=headers,
         timeout=180,
-        proxies=_NO_PROXY,
+        proxies=get_proxy(PROXY_ENABLED_HUNTER),
     )
     resp.raise_for_status()
     result = resp.json()

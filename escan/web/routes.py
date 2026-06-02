@@ -45,6 +45,8 @@ from .models import (
     ScanLogResponse,
     ConfigResponse, ConfigUpdateRequest, ConfigUpdateResponse,
     StopScanResponse, DeleteScanResponse, DeleteLogsResponse,
+    ProxyStatusResponse, ProxyTestRequest, ProxyTestResponse,
+    ProxyAddRequest, ProxyRemoveRequest, ProxyToggleRequest,
 )
 
 router = APIRouter()
@@ -1009,3 +1011,232 @@ async def update_config(body: ConfigUpdateRequest):
         return {"path": _CONFIG_FILE, "saved": True, "backup": backup_path}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# --- Proxy Pool Management ---
+
+_PROXY_TOGGLE_KEYS = ["PROXY_ENABLED_FOFA", "PROXY_ENABLED_HUNTER", "PROXY_ENABLED_NUCLEI", "PROXY_ENABLED_ICP", "PROXY_ENABLED_DEEPSEEK"]
+
+
+def _get_proxy_file_path() -> FsPath:
+    """代理文件绝对路径。"""
+    from ..config import ROOT_DIR, PROXY_FILE
+    p = FsPath(PROXY_FILE)
+    if not p.is_absolute():
+        p = ROOT_DIR / p
+    return p
+
+
+def _write_proxy_file(lines: list[str]) -> None:
+    """原子写入代理文件（先写临时文件再 rename）。"""
+    import tempfile
+    path = _get_proxy_file_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+        os.replace(tmp, str(path))
+    except Exception:
+        os.unlink(tmp)
+        raise
+
+
+def _read_dotenv() -> dict[str, str]:
+    """读取 .env 文件为 dict。"""
+    env_file = FsPath(__file__).resolve().parent.parent.parent / ".env"
+    result: dict[str, str] = {}
+    if not env_file.is_file():
+        return result
+    with open(env_file, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, _, v = line.partition("=")
+            result[k.strip()] = v.strip().strip("\"'")
+    return result
+
+
+def _write_dotenv(data: dict[str, str]) -> None:
+    """回写 .env，保留原有注释和空行，仅更新匹配的 key=value 行，追加新增 key。"""
+    env_file = FsPath(__file__).resolve().parent.parent.parent / ".env"
+    backup = str(env_file) + ".bak"
+
+    if env_file.is_file():
+        import shutil
+        shutil.copy2(str(env_file), backup)
+
+    original_lines: list[str] = []
+    if env_file.is_file():
+        original_lines = env_file.read_text(encoding="utf-8").splitlines()
+
+    new_lines = []
+    updated_keys = set()
+    for line in original_lines:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and "=" in stripped:
+            k = stripped.split("=", 1)[0].strip()
+            if k in data:
+                new_lines.append(f"{k}={data[k]}")
+                updated_keys.add(k)
+                continue
+        new_lines.append(line)
+
+    for k, v in data.items():
+        if k not in updated_keys:
+            new_lines.append(f"{k}={v}")
+
+    env_file.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+    from ..config import _load_dotenv
+    _load_dotenv()
+
+
+def _reload_proxy_pool():
+    """强制重新加载代理池单例。"""
+    from ..utils import proxy as proxy_mod
+    proxy_mod._pool = None
+    proxy_mod._pool_initialized = False
+
+
+@router.get("/proxy/status", response_model=ProxyStatusResponse, tags=["Proxy"])
+async def proxy_status():
+    """获取代理池状态：代理列表、健康状态、组件开关。"""
+    from ..utils.proxy import get_proxy_pool
+    from ..config import (
+        PROXY_ENABLED_FOFA, PROXY_ENABLED_HUNTER, PROXY_ENABLED_NUCLEI,
+        PROXY_ENABLED_ICP, PROXY_ENABLED_DEEPSEEK,
+        PROXY_STRATEGY, PROXY_COOLDOWN, PROXY_MAX_FAILURES,
+    )
+
+    pool = get_proxy_pool()
+
+    proxy_file = _get_proxy_file_path()
+    if proxy_file.is_file():
+        raw_lines = [
+            l for l in proxy_file.read_text(encoding="utf-8").splitlines()
+            if l.strip() and not l.strip().startswith("#")
+        ]
+    else:
+        raw_lines = []
+
+    pool_status = pool.status() if pool else {
+        "total": len(raw_lines), "available": len(raw_lines), "in_cooldown": 0,
+        "strategy": PROXY_STRATEGY, "cooldown_seconds": PROXY_COOLDOWN,
+        "max_failures": PROXY_MAX_FAILURES, "proxies": [
+            {"url": u, "failures": 0, "in_cooldown": False, "cooldown_remaining": 0}
+            for u in raw_lines
+        ],
+    }
+
+    pool_status["toggles"] = {
+        "fofa": PROXY_ENABLED_FOFA,
+        "hunter": PROXY_ENABLED_HUNTER,
+        "nuclei": PROXY_ENABLED_NUCLEI,
+        "icp": PROXY_ENABLED_ICP,
+        "deepseek": PROXY_ENABLED_DEEPSEEK,
+    }
+    pool_status["file_path"] = str(proxy_file)
+    pool_status["pool_loaded"] = pool is not None
+
+    return pool_status
+
+
+@router.post("/proxy/test", response_model=ProxyTestResponse, tags=["Proxy"])
+async def proxy_test(body: ProxyTestRequest):
+    """测试单个代理的连通性。"""
+    import time as _time
+    import requests as _requests
+
+    url = body.url.strip()
+    test_urls = ["https://www.baidu.com", "https://httpbin.org/ip"]
+    proxy_dict = {"http": url, "https": url}
+
+    start = _time.monotonic()
+    try:
+        for test_url in test_urls:
+            resp = _requests.get(test_url, proxies=proxy_dict, timeout=10)
+            if resp.status_code >= 500:
+                raise RuntimeError(f"{test_url} returned {resp.status_code}")
+        latency = (_time.monotonic() - start) * 1000
+        return {"url": url, "success": True, "latency_ms": round(latency, 1), "error": None}
+    except Exception as e:
+        latency = (_time.monotonic() - start) * 1000
+        return {"url": url, "success": False, "latency_ms": round(latency, 1), "error": str(e)}
+
+
+@router.post("/proxy/add", tags=["Proxy"])
+async def proxy_add(body: ProxyAddRequest):
+    """向代理文件追加一个代理。"""
+    url = body.url.strip()
+    path = _get_proxy_file_path()
+
+    lines = []
+    if path.is_file():
+        lines = [
+            l.strip() for l in path.read_text(encoding="utf-8").splitlines()
+            if l.strip() and not l.strip().startswith("#")
+        ]
+
+    if url in lines:
+        raise HTTPException(status_code=400, detail="代理已存在")
+
+    lines.append(url)
+    _write_proxy_file(lines)
+    _reload_proxy_pool()
+
+    logger.info("代理已添加: %s", url)
+    return {"message": "添加成功", "url": url, "total": len(lines)}
+
+
+@router.delete("/proxy/remove", tags=["Proxy"])
+async def proxy_remove(body: ProxyRemoveRequest):
+    """从代理文件删除一个代理。"""
+    url = body.url.strip()
+    path = _get_proxy_file_path()
+
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="代理文件不存在")
+
+    lines = [
+        l.strip() for l in path.read_text(encoding="utf-8").splitlines()
+        if l.strip() and not l.strip().startswith("#")
+    ]
+
+    if url not in lines:
+        raise HTTPException(status_code=404, detail="代理不存在")
+
+    lines.remove(url)
+    _write_proxy_file(lines)
+    _reload_proxy_pool()
+
+    logger.info("代理已删除: %s", url)
+    return {"message": "删除成功", "url": url, "total": len(lines)}
+
+
+@router.put("/proxy/toggle", tags=["Proxy"])
+async def proxy_toggle(body: ProxyToggleRequest):
+    """更新各组件的代理开关（写 .env）。"""
+    env_data = _read_dotenv()
+
+    toggle_map = {
+        "PROXY_ENABLED_FOFA": body.fofa,
+        "PROXY_ENABLED_HUNTER": body.hunter,
+        "PROXY_ENABLED_NUCLEI": body.nuclei,
+        "PROXY_ENABLED_ICP": body.icp,
+        "PROXY_ENABLED_DEEPSEEK": body.deepseek,
+    }
+
+    changed = {}
+    for key, val in toggle_map.items():
+        if val is not None:
+            env_data[key] = "1" if val else "0"
+            changed[key] = "1" if val else "0"
+
+    if changed:
+        _write_dotenv(env_data)
+        _reload_proxy_pool()
+
+    logger.info("代理开关已更新: %s", changed)
+    return {"message": "开关已更新", "toggles": changed}

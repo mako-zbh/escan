@@ -129,3 +129,31 @@ export const updateConfig = (content: string) =>
     method: 'PUT',
     body: JSON.stringify({ content }),
   });
+
+// Proxy Pool
+export const getProxyStatus = () =>
+  fetchJSON<import('../types').ProxyStatusResponse>('/proxy/status');
+
+export const testProxy = (url: string) =>
+  fetchJSON<import('../types').ProxyTestResponse>('/proxy/test', {
+    method: 'POST',
+    body: JSON.stringify({ url }),
+  });
+
+export const addProxy = (url: string) =>
+  fetchJSON<{ message: string; url: string; total: number }>('/proxy/add', {
+    method: 'POST',
+    body: JSON.stringify({ url }),
+  });
+
+export const removeProxy = (url: string) =>
+  fetchJSON<{ message: string; url: string; total: number }>('/proxy/remove', {
+    method: 'DELETE',
+    body: JSON.stringify({ url }),
+  });
+
+export const updateProxyToggles = (toggles: Record<string, boolean | null>) =>
+  fetchJSON<{ message: string; toggles: Record<string, string> }>('/proxy/toggle', {
+    method: 'PUT',
+    body: JSON.stringify(toggles),
+  });

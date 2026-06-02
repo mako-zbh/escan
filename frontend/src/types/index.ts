@@ -173,6 +173,52 @@ export interface ConfigData {
   content: string;
 }
 
+// Proxy Pool
+export interface ProxyStatusItem {
+  url: string;
+  failures: number;
+  in_cooldown: boolean;
+  cooldown_remaining: number;
+}
+
+export interface ProxyStatusResponse {
+  total: number;
+  available: number;
+  in_cooldown: number;
+  strategy: string;
+  cooldown_seconds: number;
+  max_failures: number;
+  proxies: ProxyStatusItem[];
+  toggles: {
+    fofa: boolean;
+    hunter: boolean;
+    nuclei: boolean;
+    icp: boolean;
+    deepseek: boolean;
+  };
+  file_path: string;
+  pool_loaded: boolean;
+}
+
+export interface ProxyTestRequest {
+  url: string;
+}
+
+export interface ProxyTestResponse {
+  url: string;
+  success: boolean;
+  latency_ms: number;
+  error: string | null;
+}
+
+export interface ProxyAddRequest {
+  url: string;
+}
+
+export interface ProxyRemoveRequest {
+  url: string;
+}
+
 export interface SSEProgressEvent {
   step: number | null;
   message: string;

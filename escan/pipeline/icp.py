@@ -7,13 +7,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 
-from ..config import ICP_THREADS, ICP_DELAY
+from ..config import ICP_THREADS, ICP_DELAY, PROXY_ENABLED_ICP
 from ..logging_config import get_logger
 from ..utils.network import is_ipv4, get_main_domain
+from ..utils.proxy import get_proxy
 
 logger = get_logger("pipeline.icp")
-
-_NO_PROXY = {"http": None, "https": None}
 
 MAX_RETRIES = 3
 RETRY_BACKOFF = 10
@@ -34,6 +33,7 @@ def _build_session() -> requests.Session:
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.5",
     })
+    s.proxies = get_proxy(PROXY_ENABLED_ICP)
     return s
 
 
@@ -182,7 +182,7 @@ def query_icp_api(domain: str) -> dict | None:
             params={"search": domain, "pageNum": 1, "pageSize": 10},
             headers=_build_icp_api_headers(),
             timeout=15,
-            proxies=_NO_PROXY,
+            proxies={"http": None, "https": None},  # localhost — 永远直连
         )
 
         if resp.status_code == 429:

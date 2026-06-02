@@ -13,14 +13,13 @@ import requests
 
 from ..config import (
     FOFA_KEY, FOFA_SIZE, FOFA_API, FOFA_OFFICIAL_API, FOFA_PROXY_COOKIE,
+    PROXY_ENABLED_FOFA,
 )
 from ..logging_config import get_logger
 from ..utils.retry import retry
+from ..utils.proxy import get_proxy
 
 logger = get_logger("pipeline.fofa")
-
-# 绕过系统代理环境变量（HTTP_PROXY / HTTPS_PROXY）
-_NO_PROXY = {"http": None, "https": None}
 
 
 @dataclass
@@ -158,7 +157,7 @@ def _query_official(query: str, size: int = FOFA_SIZE) -> list[FofaAsset]:
     }
 
     resp = requests.get(
-        FOFA_OFFICIAL_API, params=params, timeout=180, proxies=_NO_PROXY,
+        FOFA_OFFICIAL_API, params=params, timeout=180, proxies=get_proxy(PROXY_ENABLED_FOFA),
     )
     resp.raise_for_status()
     result = resp.json()
@@ -187,7 +186,7 @@ def _query_proxy(query: str, size: int = FOFA_SIZE) -> list[FofaAsset]:
         data=body,
         headers=_build_proxy_headers(),
         timeout=180,
-        proxies=_NO_PROXY,
+        proxies=get_proxy(PROXY_ENABLED_FOFA),
     )
     resp.raise_for_status()
     result = resp.json()

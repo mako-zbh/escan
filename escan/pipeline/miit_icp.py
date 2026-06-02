@@ -1,4 +1,7 @@
-"""MIIT ICP 备案查询 — 基于内嵌 ICP_Query 引擎，全面替代爱站/ip138。
+"""MIIT ICP 备案查询 — DIRECT CONNECTION ONLY.
+
+政府网站 (beian.miit.gov.cn) 强制直连，不走代理池。
+内部使用 ymicp IPv6 本地绑定实现轮换。
 
 用法:
     from .miit_icp import query_icp_batch, format_output

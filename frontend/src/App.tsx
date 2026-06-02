@@ -7,6 +7,7 @@ import TemplateDetailPage from './pages/TemplateDetail';
 import Scan from './pages/Scan';
 import Vulnerabilities from './pages/Vulnerabilities';
 import Config from './pages/Config';
+import Proxy from './pages/Proxy';
 
 export default function App() {
   return (
@@ -19,6 +20,7 @@ export default function App() {
             <Route path="/templates/:id" element={<TemplateDetailPage />} />
             <Route path="/scan" element={<Scan />} />
             <Route path="/vulnerabilities" element={<Vulnerabilities />} />
+            <Route path="/proxy" element={<Proxy />} />
             <Route path="/config" element={<Config />} />
           </Route>
         </Routes>
