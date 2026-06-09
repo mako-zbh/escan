@@ -172,6 +172,7 @@ export interface ICPQueryResponse {
 export interface ConfigData {
   path: string;
   content: string;
+  source?: string;
 }
 
 // Proxy Pool

@@ -1,0 +1,105 @@
+# ============================================================
+# docker-compose.yml — eScan 漏洞扫描工具链
+# ============================================================
+# 使用方式:
+#   chmod +x scripts/docker-build.sh
+#   ./scripts/docker-build.sh
+# ============================================================
+
+services:
+
+  # ---- PostgreSQL 数据库 ----
+  db:
+    image: postgres:16-alpine
+    container_name: escan-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-escan}
+      POSTGRES_USER: ${DB_USER:-escan}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-escan123}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-escan} -d ${DB_NAME:-escan}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # ---- eScan 应用服务 ----
+  escan:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: escan-app
+    restart: unless-stopped
+    ports:
+      - "5050:5050"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # --- 数据库 ---
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME:-escan}
+      DB_USER: ${DB_USER:-escan}
+      DB_PASSWORD: ${DB_PASSWORD:-escan123}
+
+      # --- FOFA ---
+      FOFA_EMAIL: ${FOFA_EMAIL:-}
+      FOFA_KEY: ${FOFA_KEY:-}
+      FOFA_API: ${FOFA_API:-}
+      FOFA_PROXY_COOKIE: ${FOFA_PROXY_COOKIE:-}
+      FOFA_SIZE: ${FOFA_SIZE:-100}
+
+      # --- Hunter ---
+      HUNTER_API_KEY: ${HUNTER_API_KEY:-}
+      HUNTER_API: ${HUNTER_API:-https://hunter.qianxin.com/openApi/search}
+      HUNTER_PROXY_API: ${HUNTER_PROXY_API:-}
+      HUNTER_PROXY_COOKIE: ${HUNTER_PROXY_COOKIE:-}
+      HUNTER_SIZE: ${HUNTER_SIZE:-100}
+
+      # --- 默认搜索引擎 ---
+      SEARCH_ENGINE: ${SEARCH_ENGINE:-fofa}
+
+      # --- Nuclei ---
+      NUCLEI_PATH: ${NUCLEI_PATH:-}
+
+      # --- ICP / 爱站 ---
+      AIZHAN_COOKIE: ${AIZHAN_COOKIE:-}
+      ICP_THREADS: ${ICP_THREADS:-2}
+      ICP_DELAY: ${ICP_DELAY:-5.0}
+
+      # --- DeepSeek ---
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-flash}
+
+      # --- 运行参数 ---
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      AGENT_CONCURRENCY: ${AGENT_CONCURRENCY:-3}
+
+      # --- 代理池 ---
+      PROXY_STRATEGY: ${PROXY_STRATEGY:-round_robin}
+      PROXY_COOLDOWN: ${PROXY_COOLDOWN:-60}
+      PROXY_MAX_FAILURES: ${PROXY_MAX_FAILURES:-3}
+
+    volumes:
+      # 持久化数据卷
+      - output:/app/output
+      - logs:/app/logs
+      - ./nuclei-poc:/app/nuclei-poc
+      - ./proxies.txt:/app/proxies.txt
+      # 配置文件（可编辑宿主文件后 docker compose restart escan）
+      - ./.env:/app/.env
+      - ./.env.local:/app/.env.local
+
+volumes:
+  pgdata:
+    driver: local
+  output:
+    driver: local
+  logs:
+    driver: local

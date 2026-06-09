@@ -331,9 +331,12 @@ CREATE INDEX IF NOT EXISTS idx_assets_dedup_key
 
 
 def get_current_version(cursor) -> int:
-    cursor.execute("SELECT COALESCE(MAX(version), 0) FROM schema_version")
-    row = cursor.fetchone()
-    return row[0] if row else 0
+    try:
+        cursor.execute("SELECT COALESCE(MAX(version), 0) FROM schema_version")
+        row = cursor.fetchone()
+        return row[0] if row else 0
+    except Exception:
+        return 0
 
 
 def init_db(cursor):

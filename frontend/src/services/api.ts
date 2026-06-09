@@ -120,11 +120,11 @@ export const getVulnerabilitiesExport = (
 };
 
 // Config
-export const getConfig = () =>
-  fetchJSON<ConfigData>('/config');
+export const getConfig = (source: 'env' | 'local' = 'env') =>
+  fetchJSON<ConfigData>(`/config?source=${source}`);
 
-export const updateConfig = (content: string) =>
-  fetchJSON<{ path: string; saved: boolean; backup: string }>('/config', {
+export const updateConfig = (content: string, source: 'env' | 'local' = 'env') =>
+  fetchJSON<{ path: string; saved: boolean; backup: string; source: string }>(`/config?source=${source}`, {
     method: 'PUT',
     body: JSON.stringify({ content }),
   });

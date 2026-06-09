@@ -1,0 +1,64 @@
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+*.egg
+
+# Node / Frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/       # built in Docker, don't copy from host
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Runtime (mounted as volumes)
+output/
+logs/
+nuclei-poc/
+proxies.txt
+
+# Local config (not used in Docker — use env vars)
+.env
+.env.local
+.env.*.local
+
+# Project artifacts
+skills-lock.json
+.claude/
+.agents/
+.planning/
+reasonix.toml
+
+# Large cache/db files
+.codegraph/
+.venv/
+venv/
+__pycache__/
+escan/__pycache__/
+escan/**/__pycache__/
+*.egg-info/
+escan.egg-info/
+vulnscan.egg-info/
+*.egg
+*.db

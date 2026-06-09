@@ -953,42 +953,55 @@ async def vulnerabilities_export(
 
 # --- Config ---
 
-_CONFIG_FILE = str(FsPath(__file__).resolve().parent.parent.parent / ".env")
+_CONFIG_FILES = {
+    "env": FsPath(__file__).resolve().parent.parent.parent / ".env",
+    "local": FsPath(__file__).resolve().parent.parent.parent / ".env.local",
+}
 
 
 @router.get("/config", tags=["Config"])
-async def get_config():
+async def get_config(source: str = Query(default="env", description="env | local")):
     try:
-        if os.path.isfile(_CONFIG_FILE):
-            with open(_CONFIG_FILE, "r", encoding="utf-8") as f:
+        config_file = _CONFIG_FILES.get(source)
+        if not config_file:
+            raise HTTPException(status_code=400, detail=f"无效的 source: {source}，可选: env, local")
+        if config_file.is_file():
+            with open(config_file, "r", encoding="utf-8") as f:
                 content = f.read()
         else:
             content = ""
-        return {"path": _CONFIG_FILE, "content": content}
+        return {"path": str(config_file), "content": content, "source": source}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.put("/config", tags=["Config"])
-async def update_config(body: ConfigUpdateRequest):
+async def update_config(body: ConfigUpdateRequest, source: str = Query(default="env", description="env | local")):
     content = body.content
     if not isinstance(content, str):
         raise HTTPException(status_code=400, detail="content 必须是字符串")
 
-    try:
-        backup_path = _CONFIG_FILE + ".bak"
-        if os.path.isfile(_CONFIG_FILE):
-            import shutil
-            shutil.copy2(_CONFIG_FILE, backup_path)
+    config_file = _CONFIG_FILES.get(source)
+    if not config_file:
+        raise HTTPException(status_code=400, detail=f"无效的 source: {source}，可选: env, local")
 
-        with open(_CONFIG_FILE, "w", encoding="utf-8") as f:
+    try:
+        backup_path = str(config_file) + ".bak"
+        if config_file.is_file():
+            import shutil
+            shutil.copy2(str(config_file), backup_path)
+
+        config_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_file, "w", encoding="utf-8") as f:
             f.write(content)
 
-        from ..config import _load_dotenv
-        _load_dotenv()
+        from ..config import reload_env
+        reload_env()
 
-        logger.info("配置文件已更新: %s", _CONFIG_FILE)
-        return {"path": _CONFIG_FILE, "saved": True, "backup": backup_path}
+        logger.info("配置文件已更新: %s", config_file)
+        return {"path": str(config_file), "saved": True, "backup": backup_path, "source": source}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1084,11 +1097,7 @@ def _reload_proxy_pool():
 async def proxy_status():
     """获取代理池状态：代理列表、健康状态、组件开关。"""
     from ..utils.proxy import get_proxy_pool
-    from ..config import (
-        PROXY_ENABLED_FOFA, PROXY_ENABLED_HUNTER, PROXY_ENABLED_NUCLEI,
-        PROXY_ENABLED_ICP, PROXY_ENABLED_DEEPSEEK,
-        PROXY_STRATEGY, PROXY_COOLDOWN, PROXY_MAX_FAILURES,
-    )
+    from .. import config as _cfg
 
     pool = get_proxy_pool()
 
@@ -1103,19 +1112,21 @@ async def proxy_status():
 
     pool_status = pool.status() if pool else {
         "total": len(raw_lines), "available": len(raw_lines), "in_cooldown": 0,
-        "strategy": PROXY_STRATEGY, "cooldown_seconds": PROXY_COOLDOWN,
-        "max_failures": PROXY_MAX_FAILURES, "proxies": [
+        "strategy": _cfg.get("PROXY_STRATEGY", "round_robin"),
+        "cooldown_seconds": _cfg.getfloat("PROXY_COOLDOWN", "60"),
+        "max_failures": _cfg.getint("PROXY_MAX_FAILURES", "3"),
+        "proxies": [
             {"url": u, "failures": 0, "in_cooldown": False, "cooldown_remaining": 0}
             for u in raw_lines
         ],
     }
 
     pool_status["toggles"] = {
-        "fofa": PROXY_ENABLED_FOFA,
-        "hunter": PROXY_ENABLED_HUNTER,
-        "nuclei": PROXY_ENABLED_NUCLEI,
-        "icp": PROXY_ENABLED_ICP,
-        "deepseek": PROXY_ENABLED_DEEPSEEK,
+        "fofa": _cfg.getbool("PROXY_ENABLED_FOFA", "0"),
+        "hunter": _cfg.getbool("PROXY_ENABLED_HUNTER", "0"),
+        "nuclei": _cfg.getbool("PROXY_ENABLED_NUCLEI", "0"),
+        "icp": _cfg.getbool("PROXY_ENABLED_ICP", "0"),
+        "deepseek": _cfg.getbool("PROXY_ENABLED_DEEPSEEK", "0"),
     }
     pool_status["file_path"] = str(proxy_file)
     pool_status["pool_loaded"] = pool is not None
@@ -1329,7 +1340,23 @@ async def proxy_toggle(body: ProxyToggleRequest):
 
     if changed:
         _write_dotenv(env_data)
+        # 通知配置系统重新加载 .env
+        from ..config import reload_env as _reload_cfg
+        _reload_cfg()
         _reload_proxy_pool()
 
     logger.info("代理开关已更新: %s", changed)
     return {"message": "开关已更新", "toggles": changed}
+
+
+@router.post("/config/reload", tags=["Config"])
+async def config_reload():
+    """重新加载 .env / .env.local 配置文件，无需重启服务。
+
+    修改配置文件后调用此端点使配置立即生效。
+    """
+    from ..config import reload_env
+    reload_env()
+    logger.info("配置已重载")
+    return {"message": "配置已重新加载", "status": "ok"}
+

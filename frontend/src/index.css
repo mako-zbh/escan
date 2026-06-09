@@ -127,6 +127,7 @@ tr.clickable { cursor: pointer; }
 .badge-medium { background: #fefce8; color: #ca8a04; }
 .badge-low { background: #eff6ff; color: #2563eb; }
 .badge-info { background: #f0f9ff; color: #0284c7; }
+.badge-warning { background: #fefce8; color: #ca8a04; }
 .badge-default { background: #f3f4f6; color: #6b7280; }
 
 .live-dot::before {

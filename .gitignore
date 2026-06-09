@@ -35,3 +35,7 @@ skills-lock.json
 
 # --- Misc ---
 归档.zip
+/proxies.txt
+/.codegraph/daemon.pid
+/.codegraph/.gitignore
+.gitignore
