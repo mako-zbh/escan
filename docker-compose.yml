@@ -49,32 +49,32 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-escan123}
 
       # --- FOFA ---
-      FOFA_EMAIL: ${FOFA_EMAIL:-}
-      FOFA_KEY: ${FOFA_KEY:-}
-      FOFA_API: ${FOFA_API:-}
-      FOFA_PROXY_COOKIE: ${FOFA_PROXY_COOKIE:-}
+      FOFA_EMAIL: ${FOFA_EMAIL}
+      FOFA_KEY: ${FOFA_KEY}
+      FOFA_API: ${FOFA_API}
+      FOFA_PROXY_COOKIE: ${FOFA_PROXY_COOKIE}
       FOFA_SIZE: ${FOFA_SIZE:-100}
 
       # --- Hunter ---
-      HUNTER_API_KEY: ${HUNTER_API_KEY:-}
+      HUNTER_API_KEY: ${HUNTER_API_KEY}
       HUNTER_API: ${HUNTER_API:-https://hunter.qianxin.com/openApi/search}
-      HUNTER_PROXY_API: ${HUNTER_PROXY_API:-}
-      HUNTER_PROXY_COOKIE: ${HUNTER_PROXY_COOKIE:-}
+      HUNTER_PROXY_API: ${HUNTER_PROXY_API}
+      HUNTER_PROXY_COOKIE: ${HUNTER_PROXY_COOKIE}
       HUNTER_SIZE: ${HUNTER_SIZE:-100}
 
       # --- 默认搜索引擎 ---
       SEARCH_ENGINE: ${SEARCH_ENGINE:-fofa}
 
       # --- Nuclei ---
-      NUCLEI_PATH: ${NUCLEI_PATH:-}
+      NUCLEI_PATH: ${NUCLEI_PATH}
 
       # --- ICP / 爱站 ---
-      AIZHAN_COOKIE: ${AIZHAN_COOKIE:-}
+      AIZHAN_COOKIE: ${AIZHAN_COOKIE}
       ICP_THREADS: ${ICP_THREADS:-2}
       ICP_DELAY: ${ICP_DELAY:-5.0}
 
       # --- DeepSeek ---
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY}
       DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-v4-flash}
 
       # --- 运行参数 ---

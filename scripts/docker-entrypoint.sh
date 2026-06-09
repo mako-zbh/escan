@@ -17,14 +17,14 @@ log()   { echo -e "${GREEN}[eScan]${NC} $1"; }
 warn()  { echo -e "${YELLOW}[eScan]${NC} $1"; }
 error() { echo -e "${RED}[eScan]${NC} $1"; }
 
-# ---- 1. 初始化 Nuclei 模板（后台超时运行，不阻塞启动） ----
+# ---- 1. 初始化 Nuclei 模板 ----
+NUCLEI_TEMPLATES_DIR="$HOME/.nuclei-templates"
 if command -v nuclei &>/dev/null; then
-    if [ ! -d "$HOME/.nuclei-templates" ] || [ -z "$(ls -A "$HOME/.nuclei-templates" 2>/dev/null)" ]; then
-        log "后台下载 Nuclei 模板（不影响启动）..."
-        # 后台下载，30 秒超时，不阻塞主进程
-        timeout 30 nuclei -update-templates 2>/dev/null && \
+    if [ ! -d "$NUCLEI_TEMPLATES_DIR" ] || [ -z "$(ls -A "$NUCLEI_TEMPLATES_DIR" 2>/dev/null)" ]; then
+        log "下载 Nuclei 官方模板库（首次约需 30-60 秒）..."
+        nuclei -update-templates 2>/dev/null && \
             log "Nuclei 模板下载完成" || \
-            warn "Nuclei 模板下载超时/失败（扫描时会自动下载）" &
+            warn "Nuclei 模板下载失败（尝试继续启动）"
     fi
 fi
 

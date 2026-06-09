@@ -41,7 +41,7 @@ def _load_dotenv(overwrite: bool = False) -> None:
                 key, value = key.strip(), value.strip().strip("\"'")
                 if overwrite:
                     os.environ[key] = value
-                elif key not in os.environ:
+                elif not os.environ.get(key):  # 空字符串视为未设置，允许 .env.local 覆盖
                     os.environ[key] = value
 
 

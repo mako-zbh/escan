@@ -548,7 +548,7 @@ async def trigger_scan(body: ScanTriggerRequest):
     if task_id:
         t = threading.Thread(
             target=_run_scan_bg,
-            args=(task_id, scan_type, poc, engine, None, region),
+            args=(task_id, scan_type, poc, engine, None, region, body.size),
             daemon=True,
         )
         _scan_threads[task_id] = t
