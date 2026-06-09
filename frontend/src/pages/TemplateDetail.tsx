@@ -38,7 +38,7 @@ export default function TemplateDetailPage() {
       : tab === 'domains' ? setDomains
       : tab === 'icp' ? setIcp
       : setVulns;
-    fetcher(id).then(d => { setter(d); setLoading(false); }).catch(() => setLoading(false));
+    fetcher(id).then((d: any) => { (setter as any)(d); setLoading(false); }).catch(() => setLoading(false));
   }, [id, tab]);
 
   if (!detail) return <p className="text-muted">加载中...</p>;

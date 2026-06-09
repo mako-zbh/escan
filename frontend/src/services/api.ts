@@ -12,7 +12,6 @@ import type {
   ScanTriggerRequest,
   ScanTriggerResponse,
   ScanLog,
-  ICPQueryRequest,
   ICPQueryResponse,
   ConfigData,
 } from '../types';
@@ -156,4 +155,16 @@ export const updateProxyToggles = (toggles: Record<string, boolean | null>) =>
   fetchJSON<{ message: string; toggles: Record<string, string> }>('/proxy/toggle', {
     method: 'PUT',
     body: JSON.stringify(toggles),
+  });
+
+export const batchTestProxies = (urls: string[]) =>
+  fetchJSON<import('../types').ProxyBatchTestResponse>('/proxy/batch-test', {
+    method: 'POST',
+    body: JSON.stringify({ urls }),
+  });
+
+export const batchAddProxies = (urls: string[], testBeforeAdd: boolean = false) =>
+  fetchJSON<import('../types').ProxyBatchAddResponse>('/proxy/batch-add', {
+    method: 'POST',
+    body: JSON.stringify({ urls, test_before_add: testBeforeAdd }),
   });

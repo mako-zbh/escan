@@ -151,6 +151,7 @@ export interface ScanTriggerRequest {
   engine: 'fofa' | 'hunter';
   poc?: string;
   region?: string;
+  size?: number;
 }
 
 export interface ScanTriggerResponse {
@@ -217,6 +218,29 @@ export interface ProxyAddRequest {
 
 export interface ProxyRemoveRequest {
   url: string;
+}
+
+export interface ProxyBatchTestResult {
+  url: string;
+  success: boolean;
+  latency_ms: number;
+  error: string | null;
+}
+
+export interface ProxyBatchTestResponse {
+  results: ProxyBatchTestResult[];
+  total: number;
+  success_count: number;
+  fail_count: number;
+}
+
+export interface ProxyBatchAddResponse {
+  message: string;
+  total_requested: number;
+  added: number;
+  skipped: number;
+  failed: number;
+  failed_details: ProxyBatchTestResult[] | null;
 }
 
 export interface SSEProgressEvent {

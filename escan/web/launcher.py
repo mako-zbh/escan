@@ -66,8 +66,14 @@ def launch():
 
     print()
     print("  eScan v2.0")
-    print(f"  API 文档:  http://localhost:5050/api/docs")
-    print(f"  Dashboard: http://localhost:5173")
+
+    # 如果已有前端构建产物，单端口模式；否则需要 Vite 开发服务器
+    if (_FRONTEND_DIR / "dist").is_dir():
+        print(f"  访问地址: http://localhost:5050")
+    else:
+        print(f"  API 文档:  http://localhost:5050/api/docs")
+    if procs.get("frontend"):
+        print(f"  Dashboard: http://localhost:5173")
     print()
 
     # 监控子进程

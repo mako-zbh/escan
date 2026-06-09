@@ -1,5 +1,5 @@
 import type { ScanTask } from '../types';
-import { formatShortDate, truncate } from '../utils/format';
+import { formatShortDate } from '../utils/format';
 
 interface Props {
   tasks: ScanTask[];

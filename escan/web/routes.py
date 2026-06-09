@@ -46,6 +46,7 @@ from .models import (
     ConfigResponse, ConfigUpdateRequest, ConfigUpdateResponse,
     StopScanResponse, DeleteScanResponse, DeleteLogsResponse,
     ProxyStatusResponse, ProxyTestRequest, ProxyTestResponse,
+    ProxyBatchTestRequest, ProxyBatchAddRequest, ProxyBatchTestResponse,
     ProxyAddRequest, ProxyRemoveRequest, ProxyToggleRequest,
 )
 
@@ -417,7 +418,8 @@ async def list_tasks(
 # --- Scans ---
 
 def _run_scan_bg(task_id: str, scan_type: str, poc: str, engine: str,
-                 resume_dir: str | None = None, region: str = ""):
+                 resume_dir: str | None = None, region: str = "",
+                 size: int = 100):
     """后台线程执行扫描。"""
     from pathlib import Path as _Path
     from .sse import sse_manager
@@ -431,51 +433,49 @@ def _run_scan_bg(task_id: str, scan_type: str, poc: str, engine: str,
     rf_dir = _Path(resume_dir) if resume_dir else None
 
     def _publish_progress(step, message, current=None, total=None):
-        """同步发布进度到 SSE。"""
-        import asyncio
+        """同步发布进度到 SSE（线程安全）。"""
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.run_coroutine_threadsafe(
-                    sse_manager.publish(task_id, "progress", {
-                        "step": step, "message": message,
-                        "current": current, "total": total,
-                    }),
-                    loop,
-                )
-        except RuntimeError:
+            sse_manager.publish_sync(task_id, "progress", {
+                "step": step, "message": message,
+                "current": current, "total": total,
+            })
+        except Exception:
             pass
 
     def _publish_log(log_id, step, level, message, created_at):
-        import asyncio
+        """发布日志到 SSE（线程安全）。"""
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.run_coroutine_threadsafe(
-                    sse_manager.publish(f"{task_id}:logs", "log", {
-                        "id": log_id, "step": step, "level": level,
-                        "message": message, "created_at": created_at,
-                    }),
-                    loop,
-                )
-        except RuntimeError:
+            sse_manager.publish_sync(f"{task_id}:logs", "log", {
+                "id": log_id, "step": step, "level": level,
+                "message": message, "created_at": created_at,
+            })
+        except Exception:
             pass
 
     try:
+        # 写入启动日志（DB + SSE）
+        from ..database.dao import insert_scan_log as _insert_log
+        with _get_cursor() as cur:
+            if cur is not None:
+                _insert_log(cur, task_id, None, "INFO", "扫描已启动")
+        _publish_log(None, None, "INFO", "扫描已启动", None)
+
         if scan_type == "categorized-incremental":
             from ..pipeline.orchestrator import run_categorized_incremental
             results = run_categorized_incremental(poc, engine,
                                                    resume_from_dir=rf_dir,
                                                    task_id=task_id,
                                                    stop_event=stop_event,
-                                                   region=region)
+                                                   region=region,
+                                                   size=size)
         else:
             from ..pipeline.orchestrator import run_categorized
             results = run_categorized(poc, engine,
                                        resume_from_dir=rf_dir,
                                        task_id=task_id,
                                        stop_event=stop_event,
-                                       region=region)
+                                       region=region,
+                                       size=size)
 
         step4_count = results.get("step4", 0)
         real_output_dir = results.get("output_dir", "")
@@ -496,24 +496,13 @@ def _run_scan_bg(task_id: str, scan_type: str, poc: str, engine: str,
                 })
                 insert_scan_log(cur, task_id, None, "INFO", "扫描完成")
 
-        import asyncio
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.run_coroutine_threadsafe(
-                    sse_manager.close_task(task_id), loop
-                )
-                asyncio.run_coroutine_threadsafe(
-                    sse_manager.close_task(f"{task_id}:logs"), loop
-                )
-        except RuntimeError:
-            pass
+        sse_manager.close_task_sync(task_id)
+        sse_manager.close_task_sync(f"{task_id}:logs")
 
         logger.info("后台扫描完成: %s [%s]", task_id, scan_type)
 
     except Exception as e:
         from ..pipeline.orchestrator import StopScanException
-        import asyncio
         if isinstance(e, StopScanException):
             logger.info("后台扫描已停止: %s", task_id)
             with _get_cursor() as cur:
@@ -528,17 +517,8 @@ def _run_scan_bg(task_id: str, scan_type: str, poc: str, engine: str,
                     insert_scan_log(cur, task_id, None, "ERROR", f"扫描失败: {e}")
 
         _publish_progress(None, f"扫描失败: {e}")
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.run_coroutine_threadsafe(
-                    sse_manager.close_task(task_id), loop
-                )
-                asyncio.run_coroutine_threadsafe(
-                    sse_manager.close_task(f"{task_id}:logs"), loop
-                )
-        except RuntimeError:
-            pass
+        sse_manager.close_task_sync(task_id)
+        sse_manager.close_task_sync(f"{task_id}:logs")
     finally:
         _scan_stop_events.pop(task_id, None)
         _scan_threads.pop(task_id, None)
@@ -573,8 +553,8 @@ async def trigger_scan(body: ScanTriggerRequest):
         )
         _scan_threads[task_id] = t
         t.start()
-        logger.info("启动后台扫描: %s type=%s poc=%s engine=%s region=%s",
-                    task_id, scan_type, poc, engine, region)
+        logger.info("启动后台扫描: %s type=%s poc=%s engine=%s region=%s size=%s",
+                    task_id, scan_type, poc, engine, region, body.size)
 
     return {"task_id": task_id, "status": "started"}
 
@@ -1188,6 +1168,119 @@ async def proxy_add(body: ProxyAddRequest):
 
     logger.info("代理已添加: %s", url)
     return {"message": "添加成功", "url": url, "total": len(lines)}
+
+
+@router.post("/proxy/batch-test", response_model=ProxyBatchTestResponse, tags=["Proxy"])
+async def proxy_batch_test(body: ProxyBatchTestRequest):
+    """批量测试代理连通性（并发测试）。"""
+    import time as _time
+    import asyncio
+    import requests as _requests
+
+    test_urls = ["https://www.baidu.com", "https://httpbin.org/ip"]
+
+    async def _test_one(url: str) -> dict:
+        url = url.strip()
+        proxy_dict = {"http": url, "https": url}
+        start = _time.monotonic()
+        try:
+            for tu in test_urls:
+                resp = await asyncio.to_thread(
+                    _requests.get, tu, proxies=proxy_dict, timeout=10
+                )
+                if resp.status_code >= 500:
+                    raise RuntimeError(f"{tu} returned {resp.status_code}")
+            latency = (_time.monotonic() - start) * 1000
+            return {"url": url, "success": True, "latency_ms": round(latency, 1), "error": None}
+        except Exception as e:
+            latency = (_time.monotonic() - start) * 1000
+            return {"url": url, "success": False, "latency_ms": round(latency, 1), "error": str(e)}
+
+    tasks = [_test_one(u) for u in body.urls]
+    results = await asyncio.gather(*tasks)
+
+    success_count = sum(1 for r in results if r["success"])
+    return ProxyBatchTestResponse(
+        results=results,
+        total=len(results),
+        success_count=success_count,
+        fail_count=len(results) - success_count,
+    )
+
+
+@router.post("/proxy/batch-add", tags=["Proxy"])
+async def proxy_batch_add(body: ProxyBatchAddRequest):
+    """批量添加代理（可选先测试后添加）。"""
+    import time as _time
+    import asyncio
+    import requests as _requests
+
+    all_urls = [u.strip() for u in body.urls if u.strip()]
+
+    # 1) 可选先测试
+    passed_urls: set[str] = set()
+    failed_results: list[dict] = []
+
+    if body.test_before_add:
+        test_urls = ["https://www.baidu.com", "https://httpbin.org/ip"]
+
+        async def _test_one(url: str) -> dict:
+            proxy_dict = {"http": url, "https": url}
+            start = _time.monotonic()
+            try:
+                for tu in test_urls:
+                    resp = await asyncio.to_thread(
+                        _requests.get, tu, proxies=proxy_dict, timeout=10
+                    )
+                    if resp.status_code >= 500:
+                        raise RuntimeError(f"{tu} returned {resp.status_code}")
+                latency = (_time.monotonic() - start) * 1000
+                return {"url": url, "success": True, "latency_ms": round(latency, 1), "error": None}
+            except Exception as e:
+                latency = (_time.monotonic() - start) * 1000
+                return {"url": url, "success": False, "latency_ms": round(latency, 1), "error": str(e)}
+
+        task_results = await asyncio.gather(*[_test_one(u) for u in all_urls])
+        for tr in task_results:
+            if tr["success"]:
+                passed_urls.add(tr["url"])
+            else:
+                failed_results.append(tr)
+        candidate_urls = list(passed_urls)
+    else:
+        candidate_urls = all_urls
+
+    # 2) 读取现有代理
+    path = _get_proxy_file_path()
+    existing: set[str] = set()
+    if path.is_file():
+        existing = set(
+            l.strip() for l in path.read_text(encoding="utf-8").splitlines()
+            if l.strip() and not l.strip().startswith("#")
+        )
+
+    # 3) 去重 + 写入
+    new_urls = [u for u in candidate_urls if u not in existing]
+    skipped = len(candidate_urls) - len(new_urls)
+
+    if new_urls:
+        all_lines = list(existing) + new_urls
+        _write_proxy_file(all_lines)
+        _reload_proxy_pool()
+
+    logger.info(
+        "批量添加代理: 请求=%d, 新增=%d, 跳过=%d, 失败=%d",
+        len(all_urls), len(new_urls), skipped, len(failed_results),
+    )
+    return {
+        "message": f"批量添加完成: 新增 {len(new_urls)} 个, 跳过 {skipped} 个"
+                    + (f", 失败 {len(failed_results)} 个" if failed_results else ""),
+        "total_requested": len(all_urls),
+        "added": len(new_urls),
+        "skipped": skipped,
+        "failed": len(failed_results),
+        "failed_details": failed_results if failed_results else None,
+    }
 
 
 @router.delete("/proxy/remove", tags=["Proxy"])

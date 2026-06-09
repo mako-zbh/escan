@@ -15,6 +15,7 @@ export default function Scan() {
   const [engine, setEngine] = useState('fofa');
   const [poc, setPoc] = useState('');
   const [region, setRegion] = useState('');
+  const [assetSize, setAssetSize] = useState('100');
 
   // Polling / SSE
   const activeTask = tasks.find(t => t.status === 'running');
@@ -24,7 +25,7 @@ export default function Scan() {
   // Log viewer state
   const [logViewerTask, setLogViewerTask] = useState<string | null>(null);
   const [logViewerLogs, setLogViewerLogs] = useState<ScanLog[]>([]);
-  const pollRef = useRef<ReturnType<typeof setInterval>>();
+  const pollRef = useRef<ReturnType<typeof setInterval>>(undefined);
 
   // Confirm dialog
   const [confirm, setConfirm] = useState<{ title: string; message: string; action: () => void } | null>(null);
@@ -53,6 +54,7 @@ export default function Scan() {
         engine: engine as 'fofa' | 'hunter',
         poc: poc || undefined,
         region: region || undefined,
+        size: parseInt(assetSize, 10) || 100,
       });
       showToast(`扫描已启动: ${res.task_id.slice(-8)}`, 'success');
       loadTasks();
@@ -126,7 +128,8 @@ export default function Scan() {
             <option value="hunter">Hunter</option>
           </select>
           <input className="input" placeholder="POC 目录 (可选)" value={poc} onChange={e => setPoc(e.target.value)} />
-          <input className="input" placeholder="地域 (可选, 如 CN/北京)" value={region} onChange={e => setRegion(e.target.value)} style={{ width: 160 }} />
+          <input className="input" placeholder="地域 (可选, 如 CN/北京)" value={region} onChange={e => setRegion(e.target.value)} style={{ width: 140 }} />
+          <input className="input" type="number" min={1} max={10000} placeholder="资产数" value={assetSize} onChange={e => setAssetSize(e.target.value)} style={{ width: 100 }} title="每模板查询资产数量" />
           <button className="btn btn-primary" onClick={handleTrigger}>启动扫描</button>
         </div>
       </div>

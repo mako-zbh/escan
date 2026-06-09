@@ -31,6 +31,34 @@ from .cache import (
 logger = get_logger("pipeline.orchestrator")
 
 
+def _log_scan_event(task_id: str | None, step: int | None, level: str,
+                    message: str, cursor=None) -> None:
+    """写入扫描日志到数据库并推送 SSE 事件。
+
+    可在任意后台线程安全调用（通过 lazy import 避免循环依赖）。
+    """
+    if task_id is None:
+        return
+    # 1) 写数据库
+    from ..database.connection import get_cursor as _get_cursor
+    from ..database.dao import insert_scan_log as _insert_log
+    if cursor is not None:
+        _insert_log(cursor, task_id, step, level, message)
+    else:
+        with _get_cursor() as cur:
+            if cur is not None:
+                _insert_log(cur, task_id, step, level, message)
+    # 2) 推送 SSE（后台线程安全 — 使用同步 publish）
+    try:
+        from ..web.sse import sse_manager as _sse
+        _sse.publish_sync(f"{task_id}:logs", "log", {
+            "id": None, "step": step, "level": level,
+            "message": message, "created_at": None,
+        })
+    except Exception:
+        pass
+
+
 class StopScanException(Exception):
     """扫描被用户主动停止。"""
     pass
@@ -124,6 +152,7 @@ def _collect_categorized_assets(
     task_id: str = None, skip_existing: bool = False,
     region: str = "",
     stop_event: threading.Event | None = None,
+    size: int = 100,
 ) -> dict[str, list[str]]:
     """Step 1 核心：逐模板查询 FOFA，资产按模板名分类保存（即时写入）。
 
@@ -176,18 +205,23 @@ def _collect_categorized_assets(
         _check_stop(stop_event)
 
         try:
-            assets = query_fn([tags], label=filename)
+            assets = query_fn([tags], label=filename, size=size)
             # assets 已按去重键去重（FofaAsset 列表），转为 URL 字符串用于文件输出
             categorized[filename] = assets
+            count = len(assets)
             logger.info(
-                "  [%s] %s → %d 条资产", filename, tags[:60], len(assets)
+                "  [%s] %s → %d 条资产", filename, tags[:60], count
             )
+            _log_scan_event(task_id, 1, "INFO",
+                            f"[{filename}] 查询 {tags[:50]} → {count} 条资产")
         except Exception as e:
             logger.error(
                 "  [%s] 查询失败 | 模板: %s | 查询: %s | 错误: %s: %s",
                 filename, filename, tags[:100], type(e).__name__, e,
             )
             categorized[filename] = []
+            _log_scan_event(task_id, 1, "ERROR",
+                            f"[{filename}] 查询失败: {e}")
 
         # 即时写入资产文件（崩溃安全）
         if categorized[filename]:
@@ -270,7 +304,8 @@ def _collect_categorized_assets(
 def run_categorized_step1(poc_path: str, out_dir: Path, engine: str = "fofa",
                           task_id: str = None, skip_existing: bool = False,
                           region: str = "",
-                          stop_event: threading.Event | None = None) -> int:
+                          stop_event: threading.Event | None = None,
+                          size: int = 100) -> int:
     """分类 Step 1：收集并分类资产。"""
     poc_abs = os.path.abspath(poc_path)
     if os.path.isfile(poc_abs):
@@ -288,7 +323,7 @@ def run_categorized_step1(poc_path: str, out_dir: Path, engine: str = "fofa",
     logger.info("分类 Step 1 (%s): 读取 %d 个 POC 模板", engine.upper(), len(yaml_files))
     categorized = _collect_categorized_assets(
         yaml_files, out_dir, engine, task_id, skip_existing=skip_existing,
-        region=region, stop_event=stop_event,
+        region=region, stop_event=stop_event, size=size,
     )
     return sum(len(v) for v in categorized.values())
 
@@ -761,6 +796,7 @@ def run_categorized(
     task_id: str = None,
     stop_event: threading.Event | None = None,
     region: str = "",
+    size: int = 100,
 ) -> dict:
     """执行分类扫描流水线（推荐）：每个模板独立查询+扫描，ICP 按模板分类。
 
@@ -838,15 +874,22 @@ def run_categorized(
         logger.info("--- Step 1: FOFA 资产收集 (%d 个模板) ---", total_templates)
         mark_step_started(out_dir, task_id, 1)
         _update_task_step(task_id, 1)
+        _log_scan_event(task_id, 1, "INFO",
+                        f"开始收集资产 — 引擎: {engine.upper()}, 模板数: {total_templates}, 每模板: {size} 条")
         asset_count = run_categorized_step1(poc_path, out_dir, engine, task_id,
                                             skip_existing=is_resume,
                                             region=region,
-                                            stop_event=stop_event)
+                                            stop_event=stop_event,
+                                            size=size)
         mark_step_completed(out_dir, task_id, 1)
         logger.info("Step 1 完成: 共收集 %d 条资产", asset_count)
+        _log_scan_event(task_id, 1, "INFO",
+                        f"资产收集完成: 共 {asset_count} 条资产")
     else:
         asset_count = _count_existing_assets(out_dir)
         logger.info("Step 1 跳过（已完成）: %d 条资产", asset_count)
+        _log_scan_event(task_id, None, "INFO",
+                        f"Step 1 跳过（已存在缓存）: {asset_count} 条资产")
 
     # 汇总全部资产到 fofa_assets.txt（兼容）
     cat_dir = out_dir / "categorized"
@@ -865,27 +908,38 @@ def run_categorized(
         logger.info("--- Step 2: Nuclei 扫描 ---")
         mark_step_started(out_dir, task_id, 2)
         _update_task_step(task_id, 2)
+        _log_scan_event(task_id, 2, "INFO",
+                        f"开始 Nuclei 漏洞扫描 — 资产数: {len(all_assets)}")
         vuln_count = run_categorized_step2(poc_path, out_dir, task_id,
                                            skip_existing=is_resume,
                                            stop_event=stop_event)
         mark_step_completed(out_dir, task_id, 2)
         logger.info("Step 2 完成: 共发现 %d 个漏洞", vuln_count)
+        _log_scan_event(task_id, 2, "INFO",
+                        f"Nuclei 扫描完成: 共发现 {vuln_count} 个漏洞")
     else:
         vuln_count = _count_existing_results(out_dir)
         logger.info("Step 2 跳过（已完成）: %d 个漏洞", vuln_count)
+        _log_scan_event(task_id, None, "INFO",
+                        f"Step 2 跳过（已存在结果）: {vuln_count} 个漏洞")
 
     # ==== Step 3: Host 提取 ====
     if resume_step <= 3:
         logger.info("--- Step 3: Host/IP 提取 ---")
         mark_step_started(out_dir, task_id, 3)
         _update_task_step(task_id, 3)
+        _log_scan_event(task_id, 3, "INFO", "开始提取 Host/IP")
         host_count = run_categorized_step3(out_dir, task_id,
                                            skip_existing=is_resume)
         mark_step_completed(out_dir, task_id, 3)
         logger.info("Step 3 完成: 提取 %d 个 host", host_count)
+        _log_scan_event(task_id, 3, "INFO",
+                        f"Host 提取完成: 共 {host_count} 个 host")
     else:
         host_count = _count_existing_hosts(out_dir)
         logger.info("Step 3 跳过（已完成）: %d 个 host", host_count)
+        _log_scan_event(task_id, None, "INFO",
+                        f"Step 3 跳过（已存在结果）: {host_count} 个 host")
 
     # ==== Step 4: ICP 备案查询 ====
     if resume_step <= 4:
@@ -893,15 +947,20 @@ def run_categorized(
         processed = set(cp.get("step4_templates", [])) if is_resume else None
         mark_step_started(out_dir, task_id, 4)
         _update_task_step(task_id, 4)
+        _log_scan_event(task_id, 4, "INFO", "开始 ICP 备案查询")
         ip_count = run_categorized_step4(out_dir, task_id,
                                          skip_existing=is_resume,
                                          processed_templates=processed,
                                          stop_event=stop_event)
         mark_step_completed(out_dir, task_id, 4)
         logger.info("Step 4 完成: 查询 %d 个 IP", ip_count)
+        _log_scan_event(task_id, 4, "INFO",
+                        f"ICP 备案查询完成: 共查询 {ip_count} 个 IP")
     else:
         ip_count = _count_icp_entries(out_dir)
         logger.info("Step 4 跳过（已完成）: %d 个 IP", ip_count)
+        _log_scan_event(task_id, None, "INFO",
+                        f"Step 4 跳过（已存在结果）: {ip_count} 个 IP")
 
     results = {
         "step1": asset_count,
@@ -927,6 +986,7 @@ def run_categorized_incremental(
     task_id: str = None,
     stop_event: threading.Event | None = None,
     region: str = "",
+    size: int = 100,
 ) -> dict:
     """增量分类扫描：跳过已缓存的查询，只扫描新资产。支持断点续扫。
     task_id: 可选，外部预创建的 scan_tasks ID，传入后不再重复创建。
@@ -991,6 +1051,8 @@ def run_categorized_incremental(
         logger.info("--- Step 1: 增量资产收集 (%d 个模板) ---",
                      len(yaml_files) if not os.path.isfile(poc_path) else 1)
         mark_step_started(out_dir, None, 1)
+        _log_scan_event(task_id, 1, "INFO",
+                        f"开始增量资产收集 — 引擎: {engine.upper()}")
 
         if os.path.isfile(poc_path):
             yaml_files = [poc_path]
@@ -1005,7 +1067,8 @@ def run_categorized_incremental(
             asset_count = run_categorized_step1(poc_path, out_dir, engine,
                                                 task_id=None, skip_existing=True,
                                                 region=region,
-                                                stop_event=stop_event)
+                                                stop_event=stop_event,
+                                                size=size)
         else:
             # 新建：原有缓存内联逻辑
             single_query_fn = _resolve_single_query_fn(engine)
@@ -1031,13 +1094,15 @@ def run_categorized_incremental(
                     continue
 
                 try:
-                    assets = single_query_fn(tags, size=100, label=template_name)
+                    assets = single_query_fn(tags, size=size, label=template_name)
                     # assets 已按去重键去重（FofaAsset 列表），转为 URL 字符串用于缓存和文件
                     asset_urls = [a.url if hasattr(a, "url") else a for a in assets]
                     categorized[template_name] = asset_urls
                     set_cached_assets(tags, asset_urls, engine)
                     new_count += 1
                     logger.info("  [%s] %s → %d 条资产(新)", template_name, tags[:60], len(assets))
+                    _log_scan_event(task_id, 1, "INFO",
+                                    f"[{template_name}] 查询 {tags[:50]} → {len(assets)} 条资产(新)")
                 except Exception as e:
                     logger.error("  [%s] 查询失败: %s", template_name, e)
                     categorized[template_name] = []
@@ -1056,6 +1121,8 @@ def run_categorized_incremental(
                 "增量分类 Step 1: %d 个模板, %d 条资产 (缓存%d, 新增%d)",
                 len(categorized), total_assets, cache_count, new_count,
             )
+            _log_scan_event(task_id, 1, "INFO",
+                            f"增量资产收集完成: {total_assets} 条资产 (缓存{cache_count}, 新增{new_count})")
 
         mark_step_completed(out_dir, None, 1)
 
@@ -1078,11 +1145,14 @@ def run_categorized_incremental(
     if resume_step <= 2:
         logger.info("--- Step 2: Nuclei 扫描 ---")
         mark_step_started(out_dir, None, 2)
+        _log_scan_event(task_id, 2, "INFO", "开始 Nuclei 漏洞扫描")
         vuln_count = run_categorized_step2(poc_path, out_dir, task_id,
                                            skip_existing=is_resume,
                                            stop_event=stop_event)
         mark_step_completed(out_dir, None, 2)
         logger.info("Step 2 完成: 共发现 %d 个漏洞", vuln_count)
+        _log_scan_event(task_id, 2, "INFO",
+                        f"Nuclei 扫描完成: 共发现 {vuln_count} 个漏洞")
     else:
         vuln_count = _count_existing_results(out_dir)
         logger.info("Step 2 跳过（已完成）: %d 个漏洞", vuln_count)
@@ -1091,10 +1161,13 @@ def run_categorized_incremental(
     if resume_step <= 3:
         logger.info("--- Step 3: Host/IP 提取 ---")
         mark_step_started(out_dir, None, 3)
+        _log_scan_event(task_id, 3, "INFO", "开始提取 Host/IP")
         host_count = run_categorized_step3(out_dir, task_id=None,
                                            skip_existing=is_resume)
         mark_step_completed(out_dir, None, 3)
         logger.info("Step 3 完成: 提取 %d 个 host", host_count)
+        _log_scan_event(task_id, 3, "INFO",
+                        f"Host 提取完成: 共 {host_count} 个 host")
     else:
         host_count = _count_existing_hosts(out_dir)
         logger.info("Step 3 跳过（已完成）: %d 个 host", host_count)
@@ -1104,12 +1177,15 @@ def run_categorized_incremental(
         logger.info("--- Step 4: ICP 备案查询 ---")
         processed = set(cp.get("step4_templates", [])) if is_resume else None
         mark_step_started(out_dir, None, 4)
+        _log_scan_event(task_id, 4, "INFO", "开始 ICP 备案查询")
         ip_count = run_categorized_step4(out_dir, task_id,
                                          skip_existing=is_resume,
                                          processed_templates=processed,
                                          stop_event=stop_event)
         mark_step_completed(out_dir, None, 4)
         logger.info("Step 4 完成: 查询 %d 个 IP", ip_count)
+        _log_scan_event(task_id, 4, "INFO",
+                        f"ICP 备案查询完成: 共查询 {ip_count} 个 IP")
     else:
         ip_count = _count_icp_entries(out_dir)
         logger.info("Step 4 跳过（已完成）: %d 个 IP", ip_count)
