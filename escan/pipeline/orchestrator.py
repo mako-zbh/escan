@@ -387,6 +387,18 @@ def run_categorized_step2(poc_path: str, out_dir: Path,
         real_id = id_map[name]
         _check_stop(stop_event)
 
+        # 跳过格式异常的模板（如被 markdown 代码块包裹的 .yaml）
+        try:
+            with open(tpath, "r", encoding="utf-8") as _tf:
+                _first_line = _tf.readline().strip()
+            if _first_line.startswith("```") or not _first_line:
+                logger.warning("  [%s] 跳过（格式异常: %s）", name, tpath)
+                _log_scan_event(task_id, 2, "WARNING",
+                                f"[{name}] 跳过（格式异常）")
+                continue
+        except Exception:
+            pass
+
         result_file = cat_dir / f"{name}_results.txt"
 
         # 恢复模式：结果文件已存在则跳过
@@ -419,8 +431,14 @@ def run_categorized_step2(poc_path: str, out_dir: Path,
         tmp_targets = str(cat_dir / f"_{name}_targets.tmp")
         Path(tmp_targets).write_text("\n".join(assets) + "\n", encoding="utf-8")
 
+        logger.info("  [%s] 扫描 %d 个目标...", name, len(assets))
+        _log_scan_event(task_id, 2, "INFO",
+                        f"[{name}] 扫描 {len(assets)} 个目标...")
+
         try:
-            nuclei_scan_fn(tmp_targets, tpath, str(result_file))
+            rc = nuclei_scan_fn(tmp_targets, tpath, str(result_file))
+            if rc != 0:
+                logger.warning("  [%s] nuclei 退出码 %d", name, rc)
         except FileNotFoundError as e:
             logger.error("  [%s] nuclei 未找到: %s", name, e)
             coverage[name] = {"was_scanned": False, "hits_found": 0}
@@ -441,6 +459,8 @@ def run_categorized_step2(poc_path: str, out_dir: Path,
                 total_hits += len(lines)
                 hits = len(lines)
                 logger.info("  [%s] 发现 %d 个漏洞", name, hits)
+                _log_scan_event(task_id, 2, "INFO",
+                                f"[{name}] 发现 {hits} 个漏洞")
 
                 # 写入数据库
                 if task_id:
@@ -612,8 +632,17 @@ def run_categorized_step4(out_dir: Path, task_id: str = None,
         return 0
 
     total_ips = 0
+    found_total = 0  # 有 ICP 备案数据的 IP 数
     new_entries: list[str] = []
 
+    total_templates = len(template_hosts)
+    total_ips_all = sum(
+        1 for h_list in template_hosts.values()
+        for h in h_list if is_ipv4(h)
+    )
+    _log_scan_event(task_id, 4, "INFO",
+        f"ICP 备案将查询 {total_ips_all} 个 IP（约 {total_ips_all * 5 // 60} 分钟），请耐心等待")
+    processed_count = 0
     for template_name in sorted(template_hosts):
         _check_stop(stop_event)
 
@@ -625,11 +654,14 @@ def run_categorized_step4(out_dir: Path, task_id: str = None,
         hosts = template_hosts[template_name]
         ips = [h for h in hosts if is_ipv4(h)]
         domains = [h for h in hosts if not is_ipv4(h)]
+        processed_count += 1
 
         # Step A: IP → 域名反查（ip138/爱站）
         all_results = []
         ip_domains: set[str] = set()
+        ip_num = 0
         for ip in ips:
+            ip_num += 1
             try:
                 res = reverse_lookup_ip(ip)
                 all_results.append(res)
@@ -641,6 +673,13 @@ def run_categorized_step4(out_dir: Path, task_id: str = None,
             except Exception as e:
                 logger.warning("  [%s] IP 反查失败: %s → %s", template_name, ip, e)
                 all_results.append({"ip": ip, "results": [], "error": str(e)})
+
+            # 每 10 个 IP 或每模板结束时输出进度日志
+            if ip_num % 10 == 0 or ip_num == len(ips):
+                _log_scan_event(task_id, 4, "INFO",
+                    f"ICP 进度: [{processed_count}/{total_templates}] {template_name} "
+                    f"({ip_num}/{len(ips)} IP, 累计 {total_ips} 个, 已备案 {found_total})")
+                _update_task_step(task_id, 4, step4_icp=found_total)
 
         # Step B: 域名 → MIIT ICP 备案（反查得到的域名 + nuclei 直接提取的域名）
         from .miit_icp import query_icp_batch as miit_query_batch
@@ -699,6 +738,8 @@ def run_categorized_step4(out_dir: Path, task_id: str = None,
                         if has_data:
                             ips_with_data += 1
 
+                    found_total += ips_with_data
+
                     from ..database.dao import upsert_template_icp_stats
                     from ..database.dao import upsert_poc_template as _upsert_tpl
                     _upsert_tpl(cur, {"id": template_name, "name": template_name})
@@ -736,21 +777,35 @@ def run_categorized_step4(out_dir: Path, task_id: str = None,
                             "icp_queried": True,
                         })
 
-    return total_ips
+    return found_total
 
 
-def _update_task_step(task_id: str | None, step: int):
-    """更新 scan_tasks 的 current_step，失败静默忽略。"""
+def _update_task_step(task_id: str | None, step: int, **counts: int) -> None:
+    """更新 scan_tasks 的 current_step 和计数，失败静默忽略。
+
+    counts: 可选的 step1_assets/step2_vulns/step3_hosts/step4_icp 实时更新。
+    """
     if not task_id:
         return
     try:
         from ..database.connection import get_cursor
-        from ..database.dao import update_task_current_step
         with get_cursor() as cur:
             if cur is not None:
-                update_task_current_step(cur, task_id, step)
+                if counts:
+                    cols = ", ".join(f"{k} = %s" for k in counts)
+                    vals = list(counts.values())
+                    cur.execute(
+                        f"UPDATE scan_tasks SET current_step = %s, {cols} WHERE task_id = %s",
+                        [step, *vals, task_id],
+                    )
+                else:
+                    cur.execute(
+                        "UPDATE scan_tasks SET current_step = %s WHERE task_id = %s",
+                        (step, task_id),
+                    )
     except Exception:
-        pass
+        import logging as _lg
+        _lg.getLogger(__name__).warning("更新任务进度失败: %s", task_id, exc_info=True)
 
 
 def _count_existing_assets(out_dir: Path) -> int:
@@ -883,6 +938,7 @@ def run_categorized(
                                             size=size)
         mark_step_completed(out_dir, task_id, 1)
         logger.info("Step 1 完成: 共收集 %d 条资产", asset_count)
+        _update_task_step(task_id, 1, step1_assets=asset_count)
         _log_scan_event(task_id, 1, "INFO",
                         f"资产收集完成: 共 {asset_count} 条资产")
     else:
@@ -915,6 +971,7 @@ def run_categorized(
                                            stop_event=stop_event)
         mark_step_completed(out_dir, task_id, 2)
         logger.info("Step 2 完成: 共发现 %d 个漏洞", vuln_count)
+        _update_task_step(task_id, 2, step2_vulns=vuln_count)
         _log_scan_event(task_id, 2, "INFO",
                         f"Nuclei 扫描完成: 共发现 {vuln_count} 个漏洞")
     else:
@@ -933,6 +990,7 @@ def run_categorized(
                                            skip_existing=is_resume)
         mark_step_completed(out_dir, task_id, 3)
         logger.info("Step 3 完成: 提取 %d 个 host", host_count)
+        _update_task_step(task_id, 3, step3_hosts=host_count)
         _log_scan_event(task_id, 3, "INFO",
                         f"Host 提取完成: 共 {host_count} 个 host")
     else:
@@ -954,6 +1012,7 @@ def run_categorized(
                                          stop_event=stop_event)
         mark_step_completed(out_dir, task_id, 4)
         logger.info("Step 4 完成: 查询 %d 个 IP", ip_count)
+        _update_task_step(task_id, 4, step4_icp=ip_count)
         _log_scan_event(task_id, 4, "INFO",
                         f"ICP 备案查询完成: 共查询 {ip_count} 个 IP")
     else:

@@ -66,7 +66,7 @@ services:
       SEARCH_ENGINE: ${SEARCH_ENGINE:-fofa}
 
       # --- Nuclei ---
-      NUCLEI_PATH: ${NUCLEI_PATH}
+      NUCLEI_PATH: /usr/local/bin/nuclei
 
       # --- ICP / 爱站 ---
       AIZHAN_COOKIE: ${AIZHAN_COOKIE}

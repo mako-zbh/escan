@@ -57,11 +57,12 @@ def find_nuclei() -> str:
         if sys.platform == "win32" and not path.lower().endswith(".exe"):
             if os.path.isfile(path + ".exe"):
                 path += ".exe"
-        if not os.path.isfile(path):
-            raise FileNotFoundError(
-                f"配置的 NUCLEI_PATH 指向的文件不存在: {path}"
-            )
-        return path
+        if os.path.isfile(path):
+            return path
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "NUCLEI_PATH 指向的文件不存在 (%s)，尝试系统 PATH...", path
+        )
 
     # 系统 PATH
     found = shutil.which("nuclei")

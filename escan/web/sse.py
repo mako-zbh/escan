@@ -109,7 +109,25 @@ async def sse_progress_generator(task_id: str):
 
 
 async def sse_log_generator(task_id: str):
-    """SSE 异步生成器 — 扫描日志流。"""
+    """SSE 异步生成器 — 扫描日志流。
+
+    连接时先推送最近的 100 条历史日志（从 DB 读取），
+    然后订阅实时事件流。
+    """
+    # 1) 回放历史日志（chronological order）
+    from ..database.connection import get_cursor as _gc
+    from ..database.dao import get_scan_logs as _get_logs
+    from datetime import datetime as _dt
+    with _gc() as cur:
+        if cur is not None:
+            for log in reversed(_get_logs(cur, task_id, limit=100, offset=0)):
+                # datetime → ISO string（JSON 可序列化）
+                for _k, _v in log.items():
+                    if isinstance(_v, _dt):
+                        log[_k] = _v.isoformat()
+                yield f"event: log\ndata: {json.dumps(log, ensure_ascii=False)}\n\n"
+
+    # 2) 订阅实时流
     queue = await sse_manager.subscribe(f"{task_id}:logs")
     try:
         yield f"event: connected\ndata: {json.dumps({'task_id': task_id})}\n\n"

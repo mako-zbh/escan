@@ -63,11 +63,12 @@ def _parse_miit_results(data: dict, query_name: str) -> list[dict]:
     results = []
     if data.get("code") == 200 and data.get("params"):
         for item in data["params"].get("list", []):
+            unit_name = item.get("unitName", "")
             results.append({
                 "domain": item.get("domain", ""),
                 "icp": item.get("mainLicence", ""),
                 "source": "miit",
-                "unitName": item.get("unitName", ""),
+                "unitName": unit_name,
                 "natureName": item.get("natureName", ""),
                 "leaderName": item.get("leaderName", ""),
                 "serviceLicence": item.get("serviceLicence", ""),
@@ -78,6 +79,7 @@ def _parse_miit_results(data: dict, query_name: str) -> list[dict]:
                 "mainId": item.get("mainId"),
                 "serviceId": item.get("serviceId"),
                 "total": data["params"].get("total", 0),
+                "icp_api": {"company_name": unit_name} if unit_name else None,
             })
     return results
 
